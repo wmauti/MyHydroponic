@@ -1,0 +1,586 @@
+<!--
+SPDX-FileCopyrightText: Copyright (C) ARDUINO SRL (http://www.arduino.cc)
+SPDX-License-Identifier: MPL-2.0
+-->
+
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Monitor idroponica (pH / EC / livello)</title>
+
+    <link rel="stylesheet" type="text/css" href="style.css">
+
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <!-- Socket.IO browser bundle (metti il file in libs/) -->
+    <script src="libs/socket.io.min.js"></script>
+
+    <!-- Il tuo JS principale -->
+    <script src="app.js"></script>
+</head>
+
+<body>
+<div class="app-container">
+
+    <!-- HEADER -->
+    <div class="header">
+        <h1 class="arduino-text">Monitor idroponica (pH / EC / livello)</h1>
+        
+        <!-- NEW: Control Panel -->
+        <div class="control-panel">
+            <div class="status-box">
+                <span class="status-label">STATO:</span>
+                <span id="system-status" class="status-value">LOADING...</span>
+            </div>
+            <div class="actions">
+                <button class="btn btn-action btn-irrig" onclick="sendCommand('start_irrigation')">IRRIGATE</button>
+                <button class="btn btn-action btn-recirc" onclick="sendCommand('start_recirculation')">MIX</button>
+                <button class="btn btn-action btn-refill" onclick="sendCommand('refill_on')">REFILL</button>
+                <button class="btn btn-action btn-stop" onclick="sendCommand('stop_all')">STOP ALL</button>
+            </div>
+        </div>
+
+        <img class="arduino-logo" src="./img/RGB-Arduino-Logo_Color Inline Loop.svg" alt="Arduino Logo">
+    </div>
+
+    <!-- TABS -->
+    <div class="tabs">
+        <!-- nuovi intervalli -->
+        <button class="tab" data-tab="historical-1y">1 anno</button>
+        <button class="tab" data-tab="historical-1m">1 mese</button>
+        <button class="tab" data-tab="historical-14d">14 gg</button>
+        <button class="tab" data-tab="historical-7d">7 gg</button>
+
+        <!-- esistenti -->
+        <button class="tab" data-tab="historical-1d">1 D</button>
+        <button class="tab" data-tab="historical-1h">1 h</button>
+
+        <button class="tab-with-circle tab active" data-tab="live">
+            <span id="live-circle"></span>
+            Live
+        </button>
+    </div>
+
+    <div class="main-content">
+
+        <!-- ================== 1 YEAR ================== -->
+        <div id="historical-1y" class="tab-content">
+
+            <div class="top-row">
+                <div class="container">
+                    <div class="graph-header">
+                        <span>Temp soluzione (°C)</span>
+                        <img src="./img/info.svg" alt="Info" class="info-btn temp"/>
+                        <div class="popover"></div>
+                    </div>
+                    <canvas id="temperature-1y-chart"></canvas>
+                    <div id="temperature-1y-chart-nodata" class="nodata-container">
+                        <img src="./img/nodata.svg" class="nodata-img">
+                        <span class="no-data">No data</span>
+                    </div>
+                </div>
+
+                <div class="container">
+                    <div class="graph-header">
+                        <span>EC (mS/cm)</span>
+                        <img src="./img/info.svg" alt="Info" class="info-btn ec"/>
+                        <div class="popover"></div>
+                    </div>
+                    <canvas id="humidity-1y-chart"></canvas>
+                    <div id="humidity-1y-chart-nodata" class="nodata-container">
+                        <img src="./img/nodata.svg" class="nodata-img">
+                        <span class="no-data">No data</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="derived-row">
+                <div class="container derived-container">
+                    <div class="graph-header">
+                        <span>pH</span>
+                        <img src="./img/info.svg" alt="Info" class="info-btn ph"/>
+                        <div class="popover"></div>
+                    </div>
+                    <canvas id="dew_point-1y-chart"></canvas>
+                    <div id="dew_point-1y-chart-nodata" class="nodata-container">
+                        <img src="./img/nodata.svg" class="nodata-img">
+                        <span class="no-data">No data</span>
+                    </div>
+                </div>
+
+                <div class="container derived-container">
+                    <div class="graph-header">
+                        <span>pH (mV)</span>
+                        <img src="./img/info.svg" alt="Info" class="info-btn phmv"/>
+                        <div class="popover"></div>
+                    </div>
+                    <canvas id="heat_index-1y-chart"></canvas>
+                    <div id="heat_index-1y-chart-nodata" class="nodata-container">
+                        <img src="./img/nodata.svg" class="nodata-img">
+                        <span class="no-data">No data</span>
+                    </div>
+                </div>
+
+                <div class="container derived-container">
+                    <div class="graph-header">
+                        <span>Livello (0/1)</span>
+                        <img src="./img/info.svg" alt="Info" class="info-btn level"/>
+                        <div class="popover"></div>
+                    </div>
+                    <canvas id="absolute_humidity-1y-chart"></canvas>
+                    <div id="absolute_humidity-1y-chart-nodata" class="nodata-container">
+                        <img src="./img/nodata.svg" class="nodata-img">
+                        <span class="no-data">No data</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ================== 1 MONTH ================== -->
+        <div id="historical-1m" class="tab-content">
+
+            <div class="top-row">
+                <div class="container">
+                    <div class="graph-header">
+                        <span>Temp soluzione (°C)</span>
+                        <img src="./img/info.svg" alt="Info" class="info-btn temp"/>
+                        <div class="popover"></div>
+                    </div>
+                    <canvas id="temperature-1m-chart"></canvas>
+                    <div id="temperature-1m-chart-nodata" class="nodata-container">
+                        <img src="./img/nodata.svg" class="nodata-img">
+                        <span class="no-data">No data</span>
+                    </div>
+                </div>
+
+                <div class="container">
+                    <div class="graph-header">
+                        <span>EC (mS/cm)</span>
+                        <img src="./img/info.svg" alt="Info" class="info-btn ec"/>
+                        <div class="popover"></div>
+                    </div>
+                    <canvas id="humidity-1m-chart"></canvas>
+                    <div id="humidity-1m-chart-nodata" class="nodata-container">
+                        <img src="./img/nodata.svg" class="nodata-img">
+                        <span class="no-data">No data</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="derived-row">
+                <div class="container derived-container">
+                    <div class="graph-header">
+                        <span>pH</span>
+                        <img src="./img/info.svg" alt="Info" class="info-btn ph"/>
+                        <div class="popover"></div>
+                    </div>
+                    <canvas id="dew_point-1m-chart"></canvas>
+                    <div id="dew_point-1m-chart-nodata" class="nodata-container">
+                        <img src="./img/nodata.svg" class="nodata-img">
+                        <span class="no-data">No data</span>
+                    </div>
+                </div>
+
+                <div class="container derived-container">
+                    <div class="graph-header">
+                        <span>pH (mV)</span>
+                        <img src="./img/info.svg" alt="Info" class="info-btn phmv"/>
+                        <div class="popover"></div>
+                    </div>
+                    <canvas id="heat_index-1m-chart"></canvas>
+                    <div id="heat_index-1m-chart-nodata" class="nodata-container">
+                        <img src="./img/nodata.svg" class="nodata-img">
+                        <span class="no-data">No data</span>
+                    </div>
+                </div>
+
+                <div class="container derived-container">
+                    <div class="graph-header">
+                        <span>Livello (0/1)</span>
+                        <img src="./img/info.svg" alt="Info" class="info-btn level"/>
+                        <div class="popover"></div>
+                    </div>
+                    <canvas id="absolute_humidity-1m-chart"></canvas>
+                    <div id="absolute_humidity-1m-chart-nodata" class="nodata-container">
+                        <img src="./img/nodata.svg" class="nodata-img">
+                        <span class="no-data">No data</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ================== 14 DAYS ================== -->
+        <div id="historical-14d" class="tab-content">
+
+            <div class="top-row">
+                <div class="container">
+                    <div class="graph-header">
+                        <span>Temp soluzione (°C)</span>
+                        <img src="./img/info.svg" alt="Info" class="info-btn temp"/>
+                        <div class="popover"></div>
+                    </div>
+                    <canvas id="temperature-14d-chart"></canvas>
+                    <div id="temperature-14d-chart-nodata" class="nodata-container">
+                        <img src="./img/nodata.svg" class="nodata-img">
+                        <span class="no-data">No data</span>
+                    </div>
+                </div>
+
+                <div class="container">
+                    <div class="graph-header">
+                        <span>EC (mS/cm)</span>
+                        <img src="./img/info.svg" alt="Info" class="info-btn ec"/>
+                        <div class="popover"></div>
+                    </div>
+                    <canvas id="humidity-14d-chart"></canvas>
+                    <div id="humidity-14d-chart-nodata" class="nodata-container">
+                        <img src="./img/nodata.svg" class="nodata-img">
+                        <span class="no-data">No data</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="derived-row">
+                <div class="container derived-container">
+                    <div class="graph-header">
+                        <span>pH</span>
+                        <img src="./img/info.svg" alt="Info" class="info-btn ph"/>
+                        <div class="popover"></div>
+                    </div>
+                    <canvas id="dew_point-14d-chart"></canvas>
+                    <div id="dew_point-14d-chart-nodata" class="nodata-container">
+                        <img src="./img/nodata.svg" class="nodata-img">
+                        <span class="no-data">No data</span>
+                    </div>
+                </div>
+
+                <div class="container derived-container">
+                    <div class="graph-header">
+                        <span>pH (mV)</span>
+                        <img src="./img/info.svg" alt="Info" class="info-btn phmv"/>
+                        <div class="popover"></div>
+                    </div>
+                    <canvas id="heat_index-14d-chart"></canvas>
+                    <div id="heat_index-14d-chart-nodata" class="nodata-container">
+                        <img src="./img/nodata.svg" class="nodata-img">
+                        <span class="no-data">No data</span>
+                    </div>
+                </div>
+
+                <div class="container derived-container">
+                    <div class="graph-header">
+                        <span>Livello (0/1)</span>
+                        <img src="./img/info.svg" alt="Info" class="info-btn level"/>
+                        <div class="popover"></div>
+                    </div>
+                    <canvas id="absolute_humidity-14d-chart"></canvas>
+                    <div id="absolute_humidity-14d-chart-nodata" class="nodata-container">
+                        <img src="./img/nodata.svg" class="nodata-img">
+                        <span class="no-data">No data</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ================== 7 DAYS ================== -->
+        <div id="historical-7d" class="tab-content">
+
+            <div class="top-row">
+                <div class="container">
+                    <div class="graph-header">
+                        <span>Temp soluzione (°C)</span>
+                        <img src="./img/info.svg" alt="Info" class="info-btn temp"/>
+                        <div class="popover"></div>
+                    </div>
+                    <canvas id="temperature-7d-chart"></canvas>
+                    <div id="temperature-7d-chart-nodata" class="nodata-container">
+                        <img src="./img/nodata.svg" class="nodata-img">
+                        <span class="no-data">No data</span>
+                    </div>
+                </div>
+
+                <div class="container">
+                    <div class="graph-header">
+                        <span>EC (mS/cm)</span>
+                        <img src="./img/info.svg" alt="Info" class="info-btn ec"/>
+                        <div class="popover"></div>
+                    </div>
+                    <canvas id="humidity-7d-chart"></canvas>
+                    <div id="humidity-7d-chart-nodata" class="nodata-container">
+                        <img src="./img/nodata.svg" class="nodata-img">
+                        <span class="no-data">No data</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="derived-row">
+                <div class="container derived-container">
+                    <div class="graph-header">
+                        <span>pH</span>
+                        <img src="./img/info.svg" alt="Info" class="info-btn ph"/>
+                        <div class="popover"></div>
+                    </div>
+                    <canvas id="dew_point-7d-chart"></canvas>
+                    <div id="dew_point-7d-chart-nodata" class="nodata-container">
+                        <img src="./img/nodata.svg" class="nodata-img">
+                        <span class="no-data">No data</span>
+                    </div>
+                </div>
+
+                <div class="container derived-container">
+                    <div class="graph-header">
+                        <span>pH (mV)</span>
+                        <img src="./img/info.svg" alt="Info" class="info-btn phmv"/>
+                        <div class="popover"></div>
+                    </div>
+                    <canvas id="heat_index-7d-chart"></canvas>
+                    <div id="heat_index-7d-chart-nodata" class="nodata-container">
+                        <img src="./img/nodata.svg" class="nodata-img">
+                        <span class="no-data">No data</span>
+                    </div>
+                </div>
+
+                <div class="container derived-container">
+                    <div class="graph-header">
+                        <span>Livello (0/1)</span>
+                        <img src="./img/info.svg" alt="Info" class="info-btn level"/>
+                        <div class="popover"></div>
+                    </div>
+                    <canvas id="absolute_humidity-7d-chart"></canvas>
+                    <div id="absolute_humidity-7d-chart-nodata" class="nodata-container">
+                        <img src="./img/nodata.svg" class="nodata-img">
+                        <span class="no-data">No data</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ================== 1 DAY ================== -->
+        <div id="historical-1d" class="tab-content">
+
+            <div class="top-row">
+                <div class="container">
+                    <div class="graph-header">
+                        <span>Temp soluzione (°C)</span>
+                        <img src="./img/info.svg" alt="Info" class="info-btn temp"/>
+                        <div class="popover"></div>
+                    </div>
+                    <canvas id="temperature-1d-chart"></canvas>
+                    <div id="temperature-1d-chart-nodata" class="nodata-container">
+                        <img src="./img/nodata.svg" class="nodata-img">
+                        <span class="no-data">No data</span>
+                    </div>
+                </div>
+
+                <div class="container">
+                    <div class="graph-header">
+                        <span>EC (mS/cm)</span>
+                        <img src="./img/info.svg" alt="Info" class="info-btn ec"/>
+                        <div class="popover"></div>
+                    </div>
+                    <canvas id="humidity-1d-chart"></canvas>
+                    <div id="humidity-1d-chart-nodata" class="nodata-container">
+                        <img src="./img/nodata.svg" class="nodata-img">
+                        <span class="no-data">No data</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="derived-row">
+                <div class="container derived-container">
+                    <div class="graph-header">
+                        <span>pH</span>
+                        <img src="./img/info.svg" alt="Info" class="info-btn ph"/>
+                        <div class="popover"></div>
+                    </div>
+                    <canvas id="dew_point-1d-chart"></canvas>
+                    <div id="dew_point-1d-chart-nodata" class="nodata-container">
+                        <img src="./img/nodata.svg" class="nodata-img">
+                        <span class="no-data">No data</span>
+                    </div>
+                </div>
+
+                <div class="container derived-container">
+                    <div class="graph-header">
+                        <span>pH (mV)</span>
+                        <img src="./img/info.svg" alt="Info" class="info-btn phmv"/>
+                        <div class="popover"></div>
+                    </div>
+                    <canvas id="heat_index-1d-chart"></canvas>
+                    <div id="heat_index-1d-chart-nodata" class="nodata-container">
+                        <img src="./img/nodata.svg" class="nodata-img">
+                        <span class="no-data">No data</span>
+                    </div>
+                </div>
+
+                <div class="container derived-container">
+                    <div class="graph-header">
+                        <span>Livello (0/1)</span>
+                        <img src="./img/info.svg" alt="Info" class="info-btn level"/>
+                        <div class="popover"></div>
+                    </div>
+                    <canvas id="absolute_humidity-1d-chart"></canvas>
+                    <div id="absolute_humidity-1d-chart-nodata" class="nodata-container">
+                        <img src="./img/nodata.svg" class="nodata-img">
+                        <span class="no-data">No data</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ================== 1 HOUR ================== -->
+        <div id="historical-1h" class="tab-content">
+
+            <div class="top-row">
+                <div class="container">
+                    <div class="graph-header">
+                        <span>Temp soluzione (°C)</span>
+                        <img src="./img/info.svg" alt="Info" class="info-btn temp"/>
+                        <div class="popover"></div>
+                    </div>
+                    <canvas id="temperature-1h-chart"></canvas>
+                    <div id="temperature-1h-chart-nodata" class="nodata-container">
+                        <img src="./img/nodata.svg" class="nodata-img">
+                        <span class="no-data">No data</span>
+                    </div>
+                </div>
+
+                <div class="container">
+                    <div class="graph-header">
+                        <span>EC (mS/cm)</span>
+                        <img src="./img/info.svg" alt="Info" class="info-btn ec"/>
+                        <div class="popover"></div>
+                    </div>
+                    <canvas id="humidity-1h-chart"></canvas>
+                    <div id="humidity-1h-chart-nodata" class="nodata-container">
+                        <img src="./img/nodata.svg" class="nodata-img">
+                        <span class="no-data">No data</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="derived-row">
+                <div class="container derived-container">
+                    <div class="graph-header">
+                        <span>pH</span>
+                        <img src="./img/info.svg" alt="Info" class="info-btn ph"/>
+                        <div class="popover"></div>
+                    </div>
+                    <canvas id="dew_point-1h-chart"></canvas>
+                    <div id="dew_point-1h-chart-nodata" class="nodata-container">
+                        <img src="./img/nodata.svg" class="nodata-img">
+                        <span class="no-data">No data</span>
+                    </div>
+                </div>
+
+                <div class="container derived-container">
+                    <div class="graph-header">
+                        <span>pH (mV)</span>
+                        <img src="./img/info.svg" alt="Info" class="info-btn phmv"/>
+                        <div class="popover"></div>
+                    </div>
+                    <canvas id="heat_index-1h-chart"></canvas>
+                    <div id="heat_index-1h-chart-nodata" class="nodata-container">
+                        <img src="./img/nodata.svg" class="nodata-img">
+                        <span class="no-data">No data</span>
+                    </div>
+                </div>
+
+                <div class="container derived-container">
+                    <div class="graph-header">
+                        <span>Livello (0/1)</span>
+                        <img src="./img/info.svg" alt="Info" class="info-btn level"/>
+                        <div class="popover"></div>
+                    </div>
+                    <canvas id="absolute_humidity-1h-chart"></canvas>
+                    <div id="absolute_humidity-1h-chart-nodata" class="nodata-container">
+                        <img src="./img/nodata.svg" class="nodata-img">
+                        <span class="no-data">No data</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ================== LIVE ================== -->
+        <div id="live" class="tab-content active">
+
+            <div class="top-row">
+                <div class="container">
+                    <div class="graph-header">
+                        <span>Temp soluzione (°C)</span>
+                        <img src="./img/info.svg" alt="Info" class="info-btn temp"/>
+                        <div class="popover"></div>
+                    </div>
+                    <canvas id="temperature-live-chart"></canvas>
+                    <div id="temperature-live-chart-nodata" class="nodata-container">
+                        <img src="./img/nodata.svg" class="nodata-img">
+                        <span class="no-data">No data</span>
+                    </div>
+                </div>
+
+                <div class="container">
+                    <div class="graph-header">
+                        <span>EC (mS/cm)</span>
+                        <img src="./img/info.svg" alt="Info" class="info-btn ec"/>
+                        <div class="popover"></div>
+                    </div>
+                    <canvas id="humidity-live-chart"></canvas>
+                    <div id="humidity-live-chart-nodata" class="nodata-container">
+                        <img src="./img/nodata.svg" class="nodata-img">
+                        <span class="no-data">No data</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="derived-row">
+                <div class="container derived-container">
+                    <div class="graph-header">
+                        <span>pH</span>
+                        <img src="./img/info.svg" alt="Info" class="info-btn ph"/>
+                        <div class="popover"></div>
+                    </div>
+                    <canvas id="dew_point-live-chart"></canvas>
+                    <div id="dew_point-live-chart-nodata" class="nodata-container">
+                        <img src="./img/nodata.svg" class="nodata-img">
+                        <span class="no-data">No data</span>
+                    </div>
+                </div>
+
+                <div class="container derived-container">
+                    <div class="graph-header">
+                        <span>pH (mV)</span>
+                        <img src="./img/info.svg" alt="Info" class="info-btn phmv"/>
+                        <div class="popover"></div>
+                    </div>
+                    <canvas id="heat_index-live-chart"></canvas>
+                    <div id="heat_index-live-chart-nodata" class="nodata-container">
+                        <img src="./img/nodata.svg" class="nodata-img">
+                        <span class="no-data">No data</span>
+                    </div>
+                </div>
+
+                <div class="container derived-container">
+                    <div class="graph-header">
+                        <span>Livello (0/1)</span>
+                        <img src="./img/info.svg" alt="Info" class="info-btn level"/>
+                        <div class="popover"></div>
+                    </div>
+                    <canvas id="absolute_humidity-live-chart"></canvas>
+                    <div id="absolute_humidity-live-chart-nodata" class="nodata-container">
+                        <img src="./img/nodata.svg" class="nodata-img">
+                        <span class="no-data">No data</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MESSAGGIO DI ERRORE CONNESSIONE -->
+    <div id="error-container" class="error-message" style="display: none;"></div>
+
+</div>
+</body>
+</html>
