@@ -1,134 +1,204 @@
-<!--
-Licensed to the Apache Software Foundation (ASF) under one or more
-contributor license agreements.  See the NOTICE file distributed with
-this work for additional information regarding copyright ownership.
-The ASF licenses this file to You under the Apache License, Version 2.0
-(the "License"); you may not use this file except in compliance with
-the License.  You may obtain a copy of the License at
-
-   http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
--->
+<p align="center">
+  <img src="https://upload.wikimedia.org/wikipedia/commons/8/87/Arduino_Logo.svg" alt="Arduino Logo" width="80"/>
+  <h1 align="center">MYHydroponic</h1>
+  <p align="center">Controller automatico per sistemi idroponici su <b>Arduino UNO Q</b></p>
+</p>
 
 <p align="center">
-  <img src="https://upload.wikimedia.org/wikipedia/commons/8/87/Arduino_Logo.svg" alt="Arduino Logo" width="100"/>
-  <br>
-  <b>Idroponica for Arduino UNO Q</b>
-  <br>
-  <a href="https://github.com/arduino/arduino-pro-ide/releases">
-    <img src="https://img.shields.io/badge/Arduino-Pro_IDE-00979D.svg" alt="Arduino IDE" />
+  <a href="https://docs.arduino.cc/hardware/uno-q">
+    <img src="https://img.shields.io/badge/Hardware-Arduino_UNO_Q-00979D?logo=arduino" alt="Arduino UNO Q" />
   </a>
   <a href="https://www.python.org/downloads/">
-    <img src="https://img.shields.io/badge/python-3.9+-blue.svg" alt="Python" />
+    <img src="https://img.shields.io/badge/Python-3.9+-3776AB?logo=python&logoColor=white" alt="Python" />
   </a>
+  <img src="https://img.shields.io/badge/Arduino_IDE-2.0+-00979D?logo=arduino" alt="Arduino IDE" />
   <a href="LICENSE">
-    <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License" />
+    <img src="https://img.shields.io/badge/License-MIT-green" alt="License MIT" />
   </a>
 </p>
 
-# MYHydroponic
+---
 
-**MYHydroponic** is a modern, high-performance controller for hydroponic systems running on the dual-processor **Arduino UNO Q**. It seamlessly bridges real-time hardware control with advanced logic and data visualization.
+**MYHydroponic** unisce il controllo hardware real-time del microcontrollore Cortex-M33 dell'Arduino UNO Q con la logica applicativa Python che gira sul processore Linux integrato.
 
-Everything is automated: irrigation, nutrient dosing (pH/EC), levels, and temperature. The system provides a beautiful, real-time web dashboard for monitoring your crops from anywhere.
-
-<p align="center">
-  <b>
-    <a href="#why-idroponica">Why Idroponica?</a> |
-    <a href="#features">Features</a> |
-    <a href="#architecture">Architecture</a> |
-    <a href="#installation">Installation</a> |
-    <a href="#resources">Resources</a>
-  </b>
-</p>
-
-## Why MYHydroponic?
-
-Hydroponics requires precision. **MYHydroponic** delivers it by leveraging the unique architecture of the Arduino UNO Q. The Real-Time MCU (Cortex-M33) handles the critical timing for pumps and sensors, while the powerful Linux MPU runs the complex logic, database, and web server.
+Tutto è automatizzato: **irrigazione schedulata**, **dosaggio pH/EC**, **rabbocco**, **ricircolo** e **monitoraggio sensori**. I dati vengono registrati su un database time-series e visualizzati su una dashboard web real-time.
 
 <img src="docs/assets/dashboard_mockup.png" alt="MYHydroponic Dashboard" width="100%" />
 
-### Key Capabilities
+---
 
--   **Precision Control**: Real-time management of pumps and solenoids.
--   **Smart Dosing**: Automatic adjustment of pH and EC levels with intelligent cooldowns.
--   **Data-Driven**: Historical data tracking for long-term crop optimization.
--   **Safe**: Integrated fallback mechanisms and safety stops for water levels.
+## Sommario
 
-## Features
+- [Funzionalità](#funzionalità)
+- [Architettura](#architettura)
+- [Hardware richiesto](#hardware-richiesto)
+- [Installazione](#installazione)
+- [Configurazione](#configurazione)
+- [Licenza](#licenza)
 
--   **Dual-Brain Architecture**: Best of both worlds—real-time reliability + Linux power.
--   **FSM Automation**: Robust Finite State Machine handles Filling, Irrigating, Draining, Dosing, and Mixing states.
--   **Advanced Monitoring Service**:
-    -   **Water Temperature**: Filtered NTC reading.
-    -   **pH & EC**: Industrial-grade sensor support with temperature compensation.
-    -   **Water Level**: Digital float switch interrupt handling.
--   **Interactive Dashboard**:
-    -   Real-time charts (Chart.js via Socket.IO).
-    -   Manual override controls.
-    -   System status indicators.
+---
 
-## Architecture
+## Funzionalità
 
-The system uses a **Bridge RPC** mechanism to communicate between the Arduino Sketch and the Python application.
+### FSM a 8 stati
+
+| Stato | Descrizione |
+|---|---|
+| `IDLE` | Attesa; verifica schedule irrigazione, dosaggio e ricircolo |
+| `REFILLING` | Rabbocco vaschetta (timeout 2 min → `ERROR`) |
+| `IRRIGATING` | Irrigazione automatica (3 min) |
+| `DRAINING` | Attesa scolo prima del ricircolo (5 min) |
+| `DOSING` | Attivazione pompa pH-down o nutrienti (10 s) |
+| `MIXING` | Ricircolo post-dosaggio per omogeneizzare (5 min) |
+| `RECIRCULATING` | Ricircolo orario (2 min) |
+| `ERROR` | Stato di blocco (es. timeout rabbocco) |
+
+### Sensori
+
+| Sensore | Pin | Note |
+|---|---|---|
+| Temperatura (NTC 10k) | `A2` | Filtro esponenziale α=0.1, media mobile 20 campioni, ADC 14 bit |
+| pH | `A0` | Tensione in mV → libreria `DFRobot_PH` con compensazione temperatura |
+| EC | `A1` | Tensione 0–1.5 V → 0–1.5 mS/cm |
+| Livello acqua (float switch) | `13` | `INPUT_PULLUP`, HIGH = OK |
+
+### Attuatori
+
+| Attuatore | Pin | Logica |
+|---|---|---|
+| Pompa irrigazione | `8` | Attiva bassa |
+| Pompa pH-down | `9` | Attiva bassa |
+| Pompa nutrienti | `5` | Attiva bassa |
+| Pompa ricircolo | `7` | Attiva bassa |
+| Valvola rabbocco | `6` | Attiva bassa |
+
+### Altre funzionalità
+
+- **Irrigazione schedulata**: ore `7–13`, `15–19`, `21` — una volta per ora per giorno.
+- **Ricircolo orario**: ogni ora al minuto 0 (±30 s).
+- **Dosaggio sicuro**: cooldown 15 min, max 20 dosaggi/giorno. Snapshot pH/EC pre e post salvati su DB.
+- **LCD 16×2 I2C** (`hd44780`): aggiornato in tempo reale con stato FSM e valori sensori.
+- **RTC DS1302**: ora sincronizzata da Python all'avvio tramite RPC.
+- **Dashboard web**: grafici storici (Chart.js + Socket.IO), comandi manuali, indicatori di stato.
+- **Time-series DB**: tutte le misure e gli stati FSM vengono registrati per analisi storica.
+
+---
+
+## Architettura
+
+Il meccanismo **Bridge RPC** (`Arduino_RouterBridge`) gestisce la comunicazione tra lo sketch C++ e Python.
 
 ```mermaid
 graph TD
-    subgraph Arduino UNO Q
-        subgraph STM32 MCU [Real-Time Core]
+    subgraph "Arduino UNO Q"
+        subgraph "Cortex-M33 MCU — Real-Time"
             Sketch["Sketch (C++)"]
-            Sensors["Sensors (pH, EC, Temp)"]
-            Actuators["Actuators (Pumps, Valves)"]
+            Sensors["Sensori: NTC · pH · EC · Float"]
+            Actuators["Attuatori: 4 Pompe · Valvola"]
+            LCD["LCD 16×2 I2C"]
+            RTC["RTC DS1302"]
             Sketch --> Sensors
             Sketch --> Actuators
+            Sketch --> LCD
+            Sketch --> RTC
         end
 
-        subgraph Linux MPU [Quad-core Host]
-            Python["Python Logic (FSM)"]
-            DB["TimeSeries DB"]
-            WebUI["Web Server (Flask/Socket.IO)"]
+        subgraph "Linux MPU — Host"
+            Python["Python (FSM + API)"]
+            DB["TimeSeriesStore"]
+            WebUI["Web Server Flask/Socket.IO"]
             Python --> DB
             Python --> WebUI
         end
 
-        Sketch <-->|RPC Bridge| Python
+        Sketch <-->|"RPC Bridge"| Python
     end
+
+    Browser["Browser (Dashboard)"] -->|HTTP / WebSocket| WebUI
 ```
 
-## Installation
+---
 
-### 1. Arduino Firmware
+## Hardware richiesto
 
-Flash the microcontroller with the hardware driver.
+- **Arduino UNO Q**
+- Sensore NTC 10k (+ resistenza 10k per partitore)
+- Sensore pH analogico (es. DFRobot SEN0161)
+- Sensore EC analogico
+- Float switch digitale (NC o NO da configurare)
+- Display LCD 16×2 con interfaccia I2C (PCF8574 / MCP23008)
+- RTC DS1302 (+ cristallo 32.768 kHz e batteria CR2032)
+- 4 pompe peristaltiche / mini-pompe (pH-down, nutrienti, ricircolo, irrigazione)
+- 1 elettrovalvola 12V (rabbocco)
+- Driver relay/MOSFET per gli attuatori
 
-1.  Open `sketch/sketch.ino` in **Arduino IDE 2.0+**.
-2.  Install the `Arduino_RouterBridge` library.
-3.  Select Board: **Arduino UNO Q**.
-4.  Hit **Upload**.
+---
 
-### 2. Python Controller
+## Installazione
 
-Deploy the logic to the Linux environment on the board.
+### 1. Firmware Arduino
+
+1. Apri `sketch/sketch.ino` in **Arduino IDE 2.0+** con supporto per UNO Q.
+2. Installa le librerie richieste (Library Manager):
+   - `Arduino_RouterBridge`
+   - `hd44780`
+   - `ClearDS1302`
+3. Seleziona board: **Arduino UNO Q**.
+4. Carica lo sketch.
+
+### 2. Controller Python
+
+Il controller Python gira sull'ambiente Linux integrato nell'UNO Q (o su un host esterno collegato alla board).
 
 ```bash
 cd python
-# Install dependencies
-pip install -r requirements.txt
 
-# Start the application
+# Avvia il controller
 python main.py
 ```
 
-## Resources
+> **Dipendenze**: le librerie principali (`arduino.app_bricks`, `arduino.app_utils`) sono fornite dall'ambiente Arduino UNO Q. Il file `DFRobot_PH.py` e `time_manager.py` sono inclusi nella cartella `python/`.
 
--   **[Hardware Guide](GUIDA_BRIDGE.md)**: Detailed RPC Bridge documentation.
--   **[Arduino UNO Q Docs](https://docs.arduino.cc/hardware/uno-q)**: Official hardware documentation.
+---
 
-## License
+## Configurazione
+```python
+# Schedule irrigazione automatica (ore del giorno)
+WATERING_HOURS = [7, 8, 9, 10, 11, 12, 13, 15, 16, 17, 18, 19, 21]
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+# Intervallo lettura sensori
+interval = 30  # secondi
+
+# Temporizzazioni FSM
+IRRIGATION_SEC      = 180   # 3 min
+DRAIN_WAIT_SEC      = 300   # 5 min
+DOSING_SEC          = 10    # 10 s
+MIXING_SEC          = 300   # 5 min
+RECIRCULATION_SEC   = 120   # 2 min
+REFILL_TIMEOUT_SEC  = 120   # 2 min (timeout → ERROR)
+DOSING_COOLDOWN_SEC = 900   # 15 min
+MAX_DOSINGS_PER_DAY = 20    # Limite giornaliero di dosaggi
+```
+REFILL_TIMEOUT_SEC  = 120   # 2 min (timeout → ERROR)
+DOSING_COOLDOWN_SEC = 900   # 15 min
+
+# Soglie dosaggio pH/EC
+# pH target: 5.5–6.5 | EC target: 1.0–2.0 mS/cm
+```
+
+La calibrazione del sensore pH si gestisce tramite `python/phdata.txt` (creato automaticamente al primo avvio con valori di default).
+
+---
+
+## Risorse
+
+- **[Guida Bridge RPC](GUIDA_BRIDGE.md)** — documentazione del meccanismo di comunicazione MCU↔Python
+- **[Documentazione Arduino UNO Q](https://docs.arduino.cc/hardware/uno-q)** — specifiche hardware ufficiali
+
+---
+
+## Licenza
+
+Distribuito sotto licenza **MIT** — vedi [LICENSE](LICENSE) per i dettagli.
+
+Copyright © 2026 Walter Mauti

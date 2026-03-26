@@ -15,13 +15,11 @@ class DFRobot_PH():
         global _neutralVoltage
         try:
             with open('phdata.txt','r') as f:
-                neutralVoltageLine = f.readline()
-                neutralVoltageLine = neutralVoltageLine.strip('neutralVoltage=')
-                _neutralVoltage    = float(neutralVoltageLine)
+                neutralVoltageLine = f.readline().strip()
+                _neutralVoltage    = float(neutralVoltageLine.split('=', 1)[1])
 
-                acidVoltageLine    = f.readline()
-                acidVoltageLine    = acidVoltageLine.strip('acidVoltage=')
-                _acidVoltage       = float(acidVoltageLine)
+                acidVoltageLine    = f.readline().strip()
+                _acidVoltage       = float(acidVoltageLine.split('=', 1)[1])
         except:
             print("phdata.txt ERROR ! Please run DFRobot_PH_Reset")
             sys.exit(1)
