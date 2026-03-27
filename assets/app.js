@@ -1,272 +1,556 @@
+/* ================================================================
+ *  MyHydroponic — Web UI  (app.js)
+ *  Registry-driven: sensors, tabs, charts, KPI, dosaggi, CSV export
+ * ================================================================ */
+
 const socket = io(`http://${window.location.host}`);
 
-// Live charts
-const tempLive = { canvas: null, chart: null, data: newChartData('orange', 'rgba(255,165,0,0.1)'), unit: '°C' };     // temp_c
-const ecLive = { canvas: null, chart: null, data: newChartData('teal', 'rgba(0,128,128,0.08)'), unit: 'mS/cm' }; // ec_ms
-const phLive = { canvas: null, chart: null, data: newChartData('green', 'rgba(0,128,0,0.08)'), unit: '' };      // ph_value
-const phmvLive = { canvas: null, chart: null, data: newChartData('red', 'rgba(255,0,0,0.08)'), unit: 'mV' };    // ph_mv
-const levelLive = { canvas: null, chart: null, data: newChartData('purple', 'rgba(128,0,128,0.06)'), unit: '' };      // float_ok
+/* ---------- SENSOR REGISTRY ---------- */
+const SENSORS = {
+    temp:  { resource: 'temp_c',   wsEvent: 'temp_c',   label: 'Temp soluzione (\u00b0C)', unit: '\u00b0C',    color: '#ff9800', fill: 'rgba(255,152,0,0.12)' },
+    ec:    { resource: 'ec_ms',    wsEvent: 'ec_ms',     label: 'EC (mS/cm)',          unit: 'mS/cm', color: '#00bcd4', fill: 'rgba(0,188,212,0.10)' },
+    ph:    { resource: 'ph_value', wsEvent: 'ph_value',  label: 'pH',                  unit: '',      color: '#4caf50', fill: 'rgba(76,175,80,0.10)' },
+    phmv:  { resource: 'ph_mv',    wsEvent: 'ph_mv',     label: 'pH (mV)',             unit: 'mV',    color: '#f44336', fill: 'rgba(244,67,54,0.10)' },
+    level: { resource: 'float_ok', wsEvent: 'float_ok',  label: 'Livello',             unit: '',      color: '#ab47bc', fill: 'rgba(171,71,188,0.10)' },
+};
 
-// Storico 1h
-const temp1h = { canvas: null, chart: null, data: newChartData('orange', 'rgba(255,165,0,0.1)'), unit: '°C' };
-const ec1h = { canvas: null, chart: null, data: newChartData('teal', 'rgba(0,128,128,0.08)'), unit: 'mS/cm' };
-const ph1h = { canvas: null, chart: null, data: newChartData('green', 'rgba(0,128,0,0.08)'), unit: '' };
-const phmv1h = { canvas: null, chart: null, data: newChartData('red', 'rgba(255,0,0,0.08)'), unit: 'mV' };
-const level1h = { canvas: null, chart: null, data: newChartData('purple', 'rgba(128,0,128,0.06)'), unit: '' };
+const TOP_ROW_SENSORS    = ['temp', 'ec'];
+const BOTTOM_ROW_SENSORS = ['ph', 'phmv', 'level'];
+const KPI_SENSORS        = ['temp', 'ec', 'ph', 'level'];
 
-// Storico 1d
-const temp1d = { canvas: null, chart: null, data: newChartData('orange', 'rgba(255,165,0,0.1)'), unit: '°C' };
-const ec1d = { canvas: null, chart: null, data: newChartData('teal', 'rgba(0,128,128,0.08)'), unit: 'mS/cm' };
-const ph1d = { canvas: null, chart: null, data: newChartData('green', 'rgba(0,128,0,0.08)'), unit: '' };
-const phmv1d = { canvas: null, chart: null, data: newChartData('red', 'rgba(255,0,0,0.08)'), unit: 'mV' };
-const level1d = { canvas: null, chart: null, data: newChartData('purple', 'rgba(128,0,128,0.06)'), unit: '' };
+/* ---------- RANGE BANDS (chartjs-plugin-annotation) ---------- */
+const RANGE_BANDS = {
+    ph:   { min: 5.5, max: 6.5, color: 'rgba(76,175,80,0.13)' },
+    ec:   { min: 1.0, max: 2.0, color: 'rgba(0,188,212,0.13)' },
+    temp: { min: 18,  max: 26,  color: 'rgba(255,152,0,0.13)' },
+};
 
-// Storico 7d
-const temp7d = { canvas: null, chart: null, data: newChartData('orange', 'rgba(255,165,0,0.1)'), unit: '°C' };
-const ec7d = { canvas: null, chart: null, data: newChartData('teal', 'rgba(0,128,128,0.08)'), unit: 'mS/cm' };
-const ph7d = { canvas: null, chart: null, data: newChartData('green', 'rgba(0,128,0,0.08)'), unit: '' };
-const phmv7d = { canvas: null, chart: null, data: newChartData('red', 'rgba(255,0,0,0.08)'), unit: 'mV' };
-const level7d = { canvas: null, chart: null, data: newChartData('purple', 'rgba(128,0,128,0.06)'), unit: '' };
+/* ---------- TAB CONFIG ---------- */
+const TABS = [
+    { id: '1y',  label: '1 anno', start: '-365d', aggr: '1d',  maxPts: 400, showMin: false, showSec: false },
+    { id: '1m',  label: '1 mese', start: '-30d',  aggr: '6h',  maxPts: 200, showMin: false, showSec: false },
+    { id: '14d', label: '14 gg',  start: '-14d',  aggr: '2h',  maxPts: 200, showMin: false, showSec: false },
+    { id: '7d',  label: '7 gg',   start: '-7d',   aggr: '1h',  maxPts: 200, showMin: false, showSec: false },
+    { id: '1d',  label: '1 D',    start: '-1d',   aggr: '1h',  maxPts: 24,  showMin: true,  showSec: false },
+    { id: '1h',  label: '1 h',    start: '-1h',   aggr: '5m',  maxPts: 12,  showMin: true,  showSec: true  },
+    { id: 'live',     label: 'Live',     isLive: true },
+    { id: 'dosaggi',  label: 'Dosaggi',  isDosaggi: true },
+];
 
-// Storico 14d
-const temp14d = { canvas: null, chart: null, data: newChartData('orange', 'rgba(255,165,0,0.1)'), unit: '°C' };
-const ec14d = { canvas: null, chart: null, data: newChartData('teal', 'rgba(0,128,128,0.08)'), unit: 'mS/cm' };
-const ph14d = { canvas: null, chart: null, data: newChartData('green', 'rgba(0,128,0,0.08)'), unit: '' };
-const phmv14d = { canvas: null, chart: null, data: newChartData('red', 'rgba(255,0,0,0.08)'), unit: 'mV' };
-const level14d = { canvas: null, chart: null, data: newChartData('purple', 'rgba(128,0,128,0.06)'), unit: '' };
+/* ---------- FSM STATE MAP ---------- */
+const FSM_STATES = {
+    0: { name: 'IDLE',          color: '#2ecc71' },
+    1: { name: 'REFILLING',     color: '#e74c3c' },
+    2: { name: 'IRRIGATING',    color: '#3498db' },
+    3: { name: 'DOSING',        color: '#e74c3c' },
+    4: { name: 'MIXING',        color: '#f39c12' },
+    5: { name: 'RECIRCULATING', color: '#9b59b6' },
+    6: { name: 'ERROR',         color: '#c0392b' },
+    7: { name: 'DRAINING',      color: '#95a5a6' },
+};
 
-// Storico 1m
-const temp1m = { canvas: null, chart: null, data: newChartData('orange', 'rgba(255,165,0,0.1)'), unit: '°C' };
-const ec1m = { canvas: null, chart: null, data: newChartData('teal', 'rgba(0,128,128,0.08)'), unit: 'mS/cm' };
-const ph1m = { canvas: null, chart: null, data: newChartData('green', 'rgba(0,128,0,0.08)'), unit: '' };
-const phmv1m = { canvas: null, chart: null, data: newChartData('red', 'rgba(255,0,0,0.08)'), unit: 'mV' };
-const level1m = { canvas: null, chart: null, data: newChartData('purple', 'rgba(128,0,128,0.06)'), unit: '' };
+/* ---------- CHART STORE ---------- */
+// charts[tabId][sensorKey] = { canvas, chart, data }
+const charts = {};
 
-// Storico 1y
-const temp1y = { canvas: null, chart: null, data: newChartData('orange', 'rgba(255,165,0,0.1)'), unit: '°C' };
-const ec1y = { canvas: null, chart: null, data: newChartData('teal', 'rgba(0,128,128,0.08)'), unit: 'mS/cm' };
-const ph1y = { canvas: null, chart: null, data: newChartData('green', 'rgba(0,128,0,0.08)'), unit: '' };
-const phmv1y = { canvas: null, chart: null, data: newChartData('red', 'rgba(255,0,0,0.08)'), unit: 'mV' };
-const level1y = { canvas: null, chart: null, data: newChartData('purple', 'rgba(128,0,128,0.06)'), unit: '' };
+/* ---------- KPI STATE ---------- */
+const kpiState = {};
+KPI_SENSORS.forEach(k => { kpiState[k] = { current: null, prev: null, history: [] }; });
 
 let liveCircleTimeout = null;
 const noDataTimeout = 10000;
 let errorContainer;
 
+/* ================================================================
+ *  DOM GENERATION
+ * ================================================================ */
+
 document.addEventListener('DOMContentLoaded', () => {
-    // Mappa i canvas esistenti
-
-    // Live
-    tempLive.canvas = document.getElementById('temperature-live-chart');
-    ecLive.canvas = document.getElementById('humidity-live-chart');
-    phLive.canvas = document.getElementById('dew_point-live-chart');
-    phmvLive.canvas = document.getElementById('heat_index-live-chart');
-    levelLive.canvas = document.getElementById('absolute_humidity-live-chart');
-
-    // 1h
-    temp1h.canvas = document.getElementById('temperature-1h-chart');
-    ec1h.canvas = document.getElementById('humidity-1h-chart');
-    ph1h.canvas = document.getElementById('dew_point-1h-chart');
-    phmv1h.canvas = document.getElementById('heat_index-1h-chart');
-    level1h.canvas = document.getElementById('absolute_humidity-1h-chart');
-
-    // 1d
-    temp1d.canvas = document.getElementById('temperature-1d-chart');
-    ec1d.canvas = document.getElementById('humidity-1d-chart');
-    ph1d.canvas = document.getElementById('dew_point-1d-chart');
-    phmv1d.canvas = document.getElementById('heat_index-1d-chart');
-    level1d.canvas = document.getElementById('absolute_humidity-1d-chart');
-
-    // 7d
-    temp7d.canvas = document.getElementById('temperature-7d-chart');
-    ec7d.canvas = document.getElementById('humidity-7d-chart');
-    ph7d.canvas = document.getElementById('dew_point-7d-chart');
-    phmv7d.canvas = document.getElementById('heat_index-7d-chart');
-    level7d.canvas = document.getElementById('absolute_humidity-7d-chart');
-
-    // 14d
-    temp14d.canvas = document.getElementById('temperature-14d-chart');
-    ec14d.canvas = document.getElementById('humidity-14d-chart');
-    ph14d.canvas = document.getElementById('dew_point-14d-chart');
-    phmv14d.canvas = document.getElementById('heat_index-14d-chart');
-    level14d.canvas = document.getElementById('absolute_humidity-14d-chart');
-
-    // 1m
-    temp1m.canvas = document.getElementById('temperature-1m-chart');
-    ec1m.canvas = document.getElementById('humidity-1m-chart');
-    ph1m.canvas = document.getElementById('dew_point-1m-chart');
-    phmv1m.canvas = document.getElementById('heat_index-1m-chart');
-    level1m.canvas = document.getElementById('absolute_humidity-1m-chart');
-
-    // 1y
-    temp1y.canvas = document.getElementById('temperature-1y-chart');
-    ec1y.canvas = document.getElementById('humidity-1y-chart');
-    ph1y.canvas = document.getElementById('dew_point-1y-chart');
-    phmv1y.canvas = document.getElementById('heat_index-1y-chart');
-    level1y.canvas = document.getElementById('absolute_humidity-1y-chart');
-
-    const liveCircle = document.getElementById('live-circle');
-    if (liveCircle) liveCircle.style.display = 'none';
-
     errorContainer = document.getElementById('error-container');
-
-    // Tabs: gestione generica attiva/non attiva
-    document.querySelectorAll('.tab').forEach(tab => {
-        tab.addEventListener('click', function () {
-            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-            document.querySelectorAll('.tab-content').forEach(tc => tc.classList.remove('active'));
-            this.classList.add('active');
-            document.getElementById(this.dataset.tab).classList.add('active');
-        });
-    });
-
-    // Storico 1h
-    const tab1h = document.querySelector('.tab[data-tab="historical-1h"]');
-    if (tab1h) {
-        tab1h.addEventListener('click', async () => {
-            renderChartData(temp1h, await listSamples("temp_c", "-1h", "5m"), 12, true, true);
-            renderChartData(ec1h, await listSamples("ec_ms", "-1h", "5m"), 12, true, true);
-            renderChartData(ph1h, await listSamples("ph_value", "-1h", "5m"), 12, true, true);
-            renderChartData(phmv1h, await listSamples("ph_mv", "-1h", "5m"), 12, true, true);
-            renderChartData(level1h, await listSamples("float_ok", "-1h", "5m"), 12, true, true);
-        });
-    }
-
-    // Storico 1d
-    const tab1d = document.querySelector('.tab[data-tab="historical-1d"]');
-    if (tab1d) {
-        tab1d.addEventListener('click', async () => {
-            renderChartData(temp1d, await listSamples("temp_c", "-1d", "1h"), 24, true, false);
-            renderChartData(ec1d, await listSamples("ec_ms", "-1d", "1h"), 24, true, false);
-            renderChartData(ph1d, await listSamples("ph_value", "-1d", "1h"), 24, true, false);
-            renderChartData(phmv1d, await listSamples("ph_mv", "-1d", "1h"), 24, true, false);
-            renderChartData(level1d, await listSamples("float_ok", "-1d", "1h"), 24, true, false);
-        });
-    }
-
-    // Storico 7d
-    const tab7d = document.querySelector('.tab[data-tab="historical-7d"]');
-    if (tab7d) {
-        tab7d.addEventListener('click', async () => {
-            renderChartData(temp7d, await listSamples("temp_c", "-7d", "1h"), 200, false, false);
-            renderChartData(ec7d, await listSamples("ec_ms", "-7d", "1h"), 200, false, false);
-            renderChartData(ph7d, await listSamples("ph_value", "-7d", "1h"), 200, false, false);
-            renderChartData(phmv7d, await listSamples("ph_mv", "-7d", "1h"), 200, false, false);
-            renderChartData(level7d, await listSamples("float_ok", "-7d", "1h"), 200, false, false);
-        });
-    }
-
-    // Storico 14d
-    const tab14d = document.querySelector('.tab[data-tab="historical-14d"]');
-    if (tab14d) {
-        tab14d.addEventListener('click', async () => {
-            renderChartData(temp14d, await listSamples("temp_c", "-14d", "2h"), 200, false, false);
-            renderChartData(ec14d, await listSamples("ec_ms", "-14d", "2h"), 200, false, false);
-            renderChartData(ph14d, await listSamples("ph_value", "-14d", "2h"), 200, false, false);
-            renderChartData(phmv14d, await listSamples("ph_mv", "-14d", "2h"), 200, false, false);
-            renderChartData(level14d, await listSamples("float_ok", "-14d", "2h"), 200, false, false);
-        });
-    }
-
-    // Storico 1m (~30d)
-    const tab1m = document.querySelector('.tab[data-tab="historical-1m"]');
-    if (tab1m) {
-        tab1m.addEventListener('click', async () => {
-            renderChartData(temp1m, await listSamples("temp_c", "-30d", "6h"), 200, false, false);
-            renderChartData(ec1m, await listSamples("ec_ms", "-30d", "6h"), 200, false, false);
-            renderChartData(ph1m, await listSamples("ph_value", "-30d", "6h"), 200, false, false);
-            renderChartData(phmv1m, await listSamples("ph_mv", "-30d", "6h"), 200, false, false);
-            renderChartData(level1m, await listSamples("float_ok", "-30d", "6h"), 200, false, false);
-        });
-    }
-
-    // Storico 1y
-    const tab1y = document.querySelector('.tab[data-tab="historical-1y"]');
-    if (tab1y) {
-        tab1y.addEventListener('click', async () => {
-            renderChartData(temp1y, await listSamples("temp_c", "-365d", "1d"), 400, false, false);
-            renderChartData(ec1y, await listSamples("ec_ms", "-365d", "1d"), 400, false, false);
-            renderChartData(ph1y, await listSamples("ph_value", "-365d", "1d"), 400, false, false);
-            renderChartData(phmv1y, await listSamples("ph_mv", "-365d", "1d"), 400, false, false);
-            renderChartData(level1y, await listSamples("float_ok", "-365d", "1d"), 400, false, false);
-        });
-    }
-
+    initTheme();
+    buildKPICards();
+    buildTabs();
+    buildTabContents();
     initSocketIO();
 });
 
+/* ---------- KPI CARDS ---------- */
+function buildKPICards() {
+    const row = document.getElementById('kpi-row');
+    KPI_SENSORS.forEach(key => {
+        const s = SENSORS[key];
+        const card = document.createElement('div');
+        card.className = 'kpi-card';
+        card.id = `kpi-${key}`;
+        card.innerHTML = `
+            <div class="kpi-label">${s.label}</div>
+            <div class="kpi-value-row">
+                <span class="kpi-value" id="kpi-${key}-value">--</span>
+                <span class="kpi-unit">${s.unit}</span>
+                <span class="kpi-trend" id="kpi-${key}-trend"></span>
+            </div>
+            <div class="kpi-range" id="kpi-${key}-range">min -- / max --</div>
+        `;
+        card.style.borderTopColor = s.color;
+        row.appendChild(card);
+    });
+}
+
+/* ---------- TAB BUTTONS ---------- */
+function buildTabs() {
+    const bar = document.getElementById('tabs-bar');
+    TABS.forEach(tab => {
+        const btn = document.createElement('button');
+        btn.dataset.tab = tab.id;
+        if (tab.isLive) {
+            btn.className = 'tab-with-circle tab active';
+            btn.innerHTML = `<span id="live-circle"></span>${tab.label}`;
+        } else {
+            btn.className = 'tab';
+            btn.textContent = tab.label;
+        }
+        btn.addEventListener('click', () => switchTab(tab));
+        bar.appendChild(btn);
+    });
+}
+
+function switchTab(tab) {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(tc => tc.classList.remove('active'));
+    document.querySelector(`.tab[data-tab="${tab.id}"]`).classList.add('active');
+    document.getElementById(`tab-${tab.id}`).classList.add('active');
+
+    if (!tab.isLive && !tab.isDosaggi) {
+        loadHistoricalTab(tab);
+    } else if (tab.isDosaggi) {
+        loadDosaggiTab();
+    }
+}
+
+/* ---------- TAB CONTENT PANELS ---------- */
+function buildTabContents() {
+    const root = document.getElementById('charts-root');
+
+    TABS.forEach(tab => {
+        const div = document.createElement('div');
+        div.id = `tab-${tab.id}`;
+        div.className = 'tab-content' + (tab.isLive ? ' active' : '');
+
+        if (tab.isDosaggi) {
+            div.innerHTML = buildDosaggiHTML();
+        } else {
+            div.innerHTML = buildChartTabHTML(tab);
+            initChartsForTab(tab, div);
+        }
+        root.appendChild(div);
+    });
+}
+
+function buildChartTabHTML(tab) {
+    const topCharts = TOP_ROW_SENSORS.map(k => chartContainerHTML(k, tab.id)).join('');
+    const bottomCharts = BOTTOM_ROW_SENSORS.map(k => chartContainerHTML(k, tab.id, true)).join('');
+
+    const exportBtn = (!tab.isLive)
+        ? `<div class="export-row"><button class="btn btn-export" onclick="exportCSV('${tab.id}')">CSV Export</button></div>`
+        : '';
+
+    return `${exportBtn}<div class="top-row">${topCharts}</div><div class="derived-row">${bottomCharts}</div>`;
+}
+
+function chartContainerHTML(sensorKey, tabId, isDerived) {
+    const s = SENSORS[sensorKey];
+    const cid = `${sensorKey}-${tabId}-chart`;
+    return `
+        <div class="container${isDerived ? ' derived-container' : ''}">
+            <div class="graph-header">
+                <span>${s.label}</span>
+            </div>
+            <canvas id="${cid}"></canvas>
+            <div id="${cid}-nodata" class="nodata-container">
+                <img src="./img/nodata.svg" class="nodata-img">
+                <span class="no-data">No data</span>
+            </div>
+        </div>`;
+}
+
+function initChartsForTab(tab, parentEl) {
+    charts[tab.id] = {};
+    const allKeys = [...TOP_ROW_SENSORS, ...BOTTOM_ROW_SENSORS];
+    allKeys.forEach(key => {
+        const s = SENSORS[key];
+        const canvas = parentEl.querySelector(`#${key}-${tab.id}-chart`);
+        charts[tab.id][key] = {
+            canvas: canvas,
+            chart: null,
+            data: newChartData(s.color, s.fill),
+            unit: s.unit,
+            sensorKey: key,
+        };
+    });
+}
+
+/* ================================================================
+ *  DOSAGGI TAB
+ * ================================================================ */
+
+function buildDosaggiHTML() {
+    return `
+        <div class="dosaggi-kpi-row">
+            <div class="kpi-card kpi-card-sm"><div class="kpi-label">Dosaggi (7gg)</div><div class="kpi-value" id="dos-count">--</div></div>
+            <div class="kpi-card kpi-card-sm"><div class="kpi-label">Durata media</div><div class="kpi-value" id="dos-avg-dur">--</div></div>
+            <div class="kpi-card kpi-card-sm"><div class="kpi-label">Intervallo medio</div><div class="kpi-value" id="dos-avg-int">--</div></div>
+            <div class="kpi-card kpi-card-sm"><div class="kpi-label">Efficacia</div><div class="kpi-value" id="dos-eff">--%</div></div>
+        </div>
+
+        <div class="container dosaggi-table-container">
+            <div class="graph-header"><span>Cicli dosaggio (7 giorni)</span></div>
+            <div class="table-scroll">
+                <table class="data-table">
+                    <thead><tr>
+                        <th>Timestamp</th><th>pH prima</th><th>pH dopo</th><th>\u0394 pH</th>
+                        <th>EC prima</th><th>EC dopo</th><th>\u0394 EC</th><th>Risultato</th>
+                    </tr></thead>
+                    <tbody id="dosing-tbody"></tbody>
+                </table>
+            </div>
+            <div class="pagination" id="dosing-pagination"></div>
+        </div>
+
+        <div class="container dosaggi-table-container">
+            <div class="graph-header"><span>Storico FSM (7 giorni)</span></div>
+            <div class="table-scroll">
+                <table class="data-table">
+                    <thead><tr>
+                        <th>Timestamp</th><th>Stato</th><th>Durata (min)</th>
+                    </tr></thead>
+                    <tbody id="fsm-tbody"></tbody>
+                </table>
+            </div>
+            <div class="pagination" id="fsm-pagination"></div>
+        </div>`;
+}
+
+let dosingData = [];
+let fsmData = [];
+let dosingPage = 0;
+let fsmPage = 0;
+const PAGE_SIZE = 10;
+
+async function loadDosaggiTab() {
+    const [phBefore, phAfter, ecBefore, ecAfter, fsmRaw] = await Promise.all([
+        listSamples('dosing_ph_before', '-7d', '1m'),
+        listSamples('dosing_ph_after',  '-7d', '1m'),
+        listSamples('dosing_ec_before', '-7d', '1m'),
+        listSamples('dosing_ec_after',  '-7d', '1m'),
+        listSamples('fsm_state',        '-7d', '1m'),
+    ]);
+
+    // Build dosing cycles
+    dosingData = buildDosingCycles(phBefore, phAfter, ecBefore, ecAfter);
+    dosingPage = 0;
+    renderDosingTable();
+
+    // Build FSM events
+    fsmData = buildFSMEvents(fsmRaw);
+    fsmPage = 0;
+    renderFSMTable();
+
+    // KPI summary
+    updateDosaggiKPI();
+}
+
+function buildDosingCycles(phB, phA, ecB, ecA) {
+    if (!phB || !phA) return [];
+    const cycles = [];
+    const len = Math.min(phB.length, phA.length);
+    for (let i = 0; i < len; i++) {
+        const phBefore = phB[i].value;
+        const phAfter  = phA[i].value;
+        const ecBefore = (ecB && ecB[i]) ? ecB[i].value : null;
+        const ecAfter  = (ecA && ecA[i]) ? ecA[i].value : null;
+        if (phBefore === 0 && phAfter === 0) continue; // skip empty
+        cycles.push({
+            ts: phB[i].ts,
+            phBefore, phAfter,
+            ecBefore, ecAfter,
+            deltaPh: phAfter - phBefore,
+            deltaEc: (ecBefore !== null && ecAfter !== null) ? ecAfter - ecBefore : null,
+        });
+    }
+    return cycles.reverse(); // newest first
+}
+
+function getDosingResult(cycle) {
+    const ph = cycle.phAfter;
+    if (ph >= 5.5 && ph <= 6.5) return { text: 'Target', cls: 'badge-ok' };
+    if (ph > 6.5) return { text: 'Eccesso', cls: 'badge-warn' };
+    return { text: 'Difetto', cls: 'badge-err' };
+}
+
+function renderDosingTable() {
+    const tbody = document.getElementById('dosing-tbody');
+    const page = dosingData.slice(dosingPage * PAGE_SIZE, (dosingPage + 1) * PAGE_SIZE);
+    tbody.innerHTML = page.map(c => {
+        const r = getDosingResult(c);
+        return `<tr>
+            <td>${fmtTs(c.ts)}</td>
+            <td>${c.phBefore.toFixed(2)}</td><td>${c.phAfter.toFixed(2)}</td>
+            <td class="${c.deltaPh < 0 ? 'delta-neg' : 'delta-pos'}">${c.deltaPh > 0 ? '+' : ''}${c.deltaPh.toFixed(2)}</td>
+            <td>${c.ecBefore !== null ? c.ecBefore.toFixed(2) : '--'}</td>
+            <td>${c.ecAfter !== null ? c.ecAfter.toFixed(2) : '--'}</td>
+            <td>${c.deltaEc !== null ? ((c.deltaEc > 0 ? '+' : '') + c.deltaEc.toFixed(2)) : '--'}</td>
+            <td><span class="badge ${r.cls}">${r.text}</span></td>
+        </tr>`;
+    }).join('');
+    renderPagination('dosing-pagination', dosingData.length, dosingPage, p => { dosingPage = p; renderDosingTable(); });
+}
+
+function buildFSMEvents(raw) {
+    if (!raw || raw.length < 2) return [];
+    const events = [];
+    for (let i = 0; i < raw.length - 1; i++) {
+        const stateVal = Math.round(raw[i].value);
+        const stateInfo = FSM_STATES[stateVal] || { name: `STATE_${stateVal}`, color: '#888' };
+        const durMin = ((raw[i + 1].ts - raw[i].ts) / 60000).toFixed(1);
+        if (stateVal === 0 && durMin > 60) continue; // skip long IDLE
+        events.push({ ts: raw[i].ts, state: stateInfo, duration: durMin });
+    }
+    return events.reverse();
+}
+
+function renderFSMTable() {
+    const tbody = document.getElementById('fsm-tbody');
+    const page = fsmData.slice(fsmPage * PAGE_SIZE, (fsmPage + 1) * PAGE_SIZE);
+    tbody.innerHTML = page.map(e => `<tr>
+        <td>${fmtTs(e.ts)}</td>
+        <td><span class="state-badge" style="background:${e.state.color}">${e.state.name}</span></td>
+        <td>${e.duration}</td>
+    </tr>`).join('');
+    renderPagination('fsm-pagination', fsmData.length, fsmPage, p => { fsmPage = p; renderFSMTable(); });
+}
+
+function updateDosaggiKPI() {
+    const el = (id) => document.getElementById(id);
+    el('dos-count').textContent = dosingData.length;
+
+    if (dosingData.length > 0) {
+        const onTarget = dosingData.filter(c => c.phAfter >= 5.5 && c.phAfter <= 6.5).length;
+        el('dos-eff').textContent = Math.round(onTarget / dosingData.length * 100) + '%';
+    }
+
+    if (dosingData.length >= 2) {
+        const intervals = [];
+        for (let i = 0; i < dosingData.length - 1; i++) {
+            intervals.push(Math.abs(dosingData[i].ts - dosingData[i + 1].ts) / 60000);
+        }
+        el('dos-avg-int').textContent = Math.round(intervals.reduce((a, b) => a + b, 0) / intervals.length) + ' min';
+    }
+
+    // avg duration not available from before/after only; show "--"
+    el('dos-avg-dur').textContent = '--';
+}
+
+function renderPagination(containerId, totalItems, currentPage, onPageChange) {
+    const container = document.getElementById(containerId);
+    const totalPages = Math.ceil(totalItems / PAGE_SIZE);
+    if (totalPages <= 1) { container.innerHTML = ''; return; }
+    let html = '';
+    if (currentPage > 0) html += `<button class="btn btn-page" data-p="${currentPage - 1}">&laquo;</button>`;
+    for (let i = 0; i < totalPages; i++) {
+        html += `<button class="btn btn-page${i === currentPage ? ' active' : ''}" data-p="${i}">${i + 1}</button>`;
+    }
+    if (currentPage < totalPages - 1) html += `<button class="btn btn-page" data-p="${currentPage + 1}">&raquo;</button>`;
+    container.innerHTML = html;
+    container.querySelectorAll('[data-p]').forEach(btn => {
+        btn.addEventListener('click', () => onPageChange(parseInt(btn.dataset.p)));
+    });
+}
+
+/* ================================================================
+ *  HISTORICAL DATA LOADING (parallel fetch + spinner)
+ * ================================================================ */
+
+async function loadHistoricalTab(tabCfg) {
+    const tabEl = document.getElementById(`tab-${tabCfg.id}`);
+    showSpinners(tabEl);
+
+    try {
+        const sensorKeys = [...TOP_ROW_SENSORS, ...BOTTOM_ROW_SENSORS];
+        const results = await Promise.all(
+            sensorKeys.map(k => listSamples(SENSORS[k].resource, tabCfg.start, tabCfg.aggr))
+        );
+        sensorKeys.forEach((key, i) => {
+            renderChartData(charts[tabCfg.id][key], results[i], tabCfg.maxPts, tabCfg.showMin, tabCfg.showSec);
+        });
+    } finally {
+        hideSpinners(tabEl);
+    }
+}
+
+function showSpinners(tabEl) {
+    tabEl.querySelectorAll('.container').forEach(c => {
+        if (c.querySelector('.chart-spinner')) return;
+        const sp = document.createElement('div');
+        sp.className = 'chart-spinner';
+        c.appendChild(sp);
+    });
+}
+
+function hideSpinners(tabEl) {
+    tabEl.querySelectorAll('.chart-spinner').forEach(s => s.remove());
+}
+
+/* ================================================================
+ *  CSV EXPORT
+ * ================================================================ */
+
+async function exportCSV(tabId) {
+    const tabCfg = TABS.find(t => t.id === tabId);
+    if (!tabCfg || tabCfg.isLive || tabCfg.isDosaggi) return;
+
+    const sensorKeys = [...TOP_ROW_SENSORS, ...BOTTOM_ROW_SENSORS];
+    const results = await Promise.all(
+        sensorKeys.map(k => listSamples(SENSORS[k].resource, tabCfg.start, tabCfg.aggr))
+    );
+
+    const tsMap = new Map();
+    sensorKeys.forEach((key, i) => {
+        if (!results[i]) return;
+        for (const row of results[i]) {
+            if (!tsMap.has(row.ts)) tsMap.set(row.ts, {});
+            tsMap.get(row.ts)[key] = row.value;
+        }
+    });
+
+    const sorted = [...tsMap.entries()].sort((a, b) => a[0] - b[0]);
+    const header = 'timestamp,temp_c,ec_ms,ph,ph_mv,level\n';
+    const rows = sorted.map(([ts, vals]) => {
+        const d = new Date(ts).toISOString();
+        return `${d},${vals.temp ?? ''},${vals.ec ?? ''},${vals.ph ?? ''},${vals.phmv ?? ''},${vals.level ?? ''}`;
+    }).join('\n');
+
+    const blob = new Blob([header + rows], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const today = new Date().toISOString().slice(0, 10);
+    a.href = url;
+    a.download = `idroponica_${tabId}_${today}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+/* ================================================================
+ *  SOCKET.IO
+ * ================================================================ */
+
 function initSocketIO() {
     socket.on('connect', () => {
-        if (errorContainer) {
-            errorContainer.style.display = 'none';
-            errorContainer.textContent = '';
-        }
+        if (errorContainer) { errorContainer.style.display = 'none'; errorContainer.textContent = ''; }
     });
 
     socket.on('disconnect', () => {
         if (errorContainer) {
-            errorContainer.textContent = 'Connection to the board lost. Please check the connection.';
+            errorContainer.textContent = 'Connessione persa. Verifica la connessione.';
             errorContainer.style.display = 'block';
         }
     });
 
-    // Canali live esattamente come in Python
-    socket.on('temp_c', (message) => renderChartData(tempLive, [message]));
-    socket.on('ec_ms', (message) => renderChartData(ecLive, [message]));
-    socket.on('ph_value', (message) => renderChartData(phLive, [message]));
-    socket.on('ph_mv', (message) => renderChartData(phmvLive, [message]));
-    socket.on('float_ok', (message) => renderChartData(levelLive, [message]));
+    // Live chart data
+    for (const [key, sensor] of Object.entries(SENSORS)) {
+        socket.on(sensor.wsEvent, (msg) => {
+            if (charts['live'] && charts['live'][key]) {
+                renderChartData(charts['live'][key], [msg]);
+            }
+            updateKPI(key, msg);
+        });
+    }
 
-    // NEW: Listen for status updates
-    socket.on('state_changed', (message) => {
+    // FSM state
+    socket.on('state_changed', (msg) => {
         const statusEl = document.getElementById('system-status');
-        if (statusEl && message.state) {
-            statusEl.textContent = message.state;
-            // Optional: change color based on state
-            statusEl.className = 'status-value ' + message.state;
+        if (statusEl && msg.state) {
+            statusEl.textContent = msg.state;
+            statusEl.className = 'status-value ' + msg.state;
         }
+    });
+
+    // Server clock
+    socket.on('server_time', (msg) => {
+        const el = document.getElementById('server-clock');
+        if (el && msg.time) el.textContent = msg.time;
     });
 }
 
-// NEW: Send commands to the board
-async function sendCommand(cmd) {
-    try {
-        console.log(`Sending command: ${cmd}`);
-        const response = await fetch(`http://${window.location.host}/api/command/${cmd}`);
-        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-        const data = await response.json();
-        console.log("Command result:", data);
-    } catch (error) {
-        console.error("Command failed:", error);
-        alert("Command failed: " + error.message);
+/* ================================================================
+ *  KPI UPDATES
+ * ================================================================ */
+
+function updateKPI(key, msg) {
+    if (!KPI_SENSORS.includes(key)) return;
+    const state = kpiState[key];
+    state.prev = state.current;
+    state.current = msg.value;
+    state.history.push({ value: msg.value, ts: msg.ts });
+
+    // Keep only last 60 min
+    const cutoff = Date.now() - 3600000;
+    state.history = state.history.filter(h => h.ts > cutoff);
+
+    const valEl = document.getElementById(`kpi-${key}-value`);
+    const trendEl = document.getElementById(`kpi-${key}-trend`);
+    const rangeEl = document.getElementById(`kpi-${key}-range`);
+
+    if (!valEl) return;
+
+    if (key === 'level') {
+        valEl.textContent = state.current >= 1 ? 'OK' : 'LOW';
+        valEl.className = 'kpi-value ' + (state.current >= 1 ? 'kpi-ok' : 'kpi-low');
+        if (trendEl) trendEl.textContent = '';
+        if (rangeEl) rangeEl.textContent = '';
+    } else {
+        valEl.textContent = state.current.toFixed(2);
+        if (trendEl && state.prev !== null) {
+            const diff = state.current - state.prev;
+            trendEl.textContent = diff > 0.01 ? '\u25b2' : (diff < -0.01 ? '\u25bc' : '\u25cf');
+            trendEl.className = 'kpi-trend ' + (diff > 0.01 ? 'trend-up' : (diff < -0.01 ? 'trend-down' : 'trend-stable'));
+        }
+        if (rangeEl && state.history.length > 0) {
+            const vals = state.history.map(h => h.value);
+            rangeEl.textContent = `min ${Math.min(...vals).toFixed(1)} / max ${Math.max(...vals).toFixed(1)}`;
+        }
     }
 }
+
+/* ================================================================
+ *  CHART RENDERING
+ * ================================================================ */
 
 async function listSamples(resource, start, aggr_window) {
     try {
         const response = await fetch(`http://${window.location.host}/get_samples/${resource}/${start}/${aggr_window}`);
-        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const data = await response.json();
-        if (data.error) {
-            console.log(`Failed to get samples for ${resource}: ${data.error}`);
-            return;
-        }
+        if (data.error) { console.log(`Samples error ${resource}: ${data.error}`); return null; }
         return data;
     } catch (error) {
-        console.log(`Error fetching samples for ${resource}: ${error.message}`);
+        console.log(`Fetch error ${resource}: ${error.message}`);
+        return null;
     }
 }
 
-function renderChartData(obj, messages, maxPoints = 20, showMinutes = true, showSeconds = true) {
+function renderChartData(obj, messages, maxPoints, showMinutes, showSeconds) {
+    if (!obj || !obj.canvas) return;
+    maxPoints = maxPoints || 20;
     if (!messages || messages.length === 0) return;
 
-    const noDataDiv = document.getElementById((obj.canvas && obj.canvas.id) + '-nodata');
+    const noDataDiv = document.getElementById(obj.canvas.id + '-nodata');
     const liveCircle = document.getElementById('live-circle');
-    const isLiveChart = obj.canvas && obj.canvas.id && obj.canvas.id.endsWith('-live-chart');
+    const isLive = obj.canvas.id.endsWith('-live-chart');
 
-    // Per gli storici resetto sempre i dati
-    if (!isLiveChart) {
+    // Reset data for historical tabs
+    if (!isLive) {
         obj.data.labels = [];
         obj.data.datasets[0].data = [];
     }
@@ -274,102 +558,96 @@ function renderChartData(obj, messages, maxPoints = 20, showMinutes = true, show
     for (const message of messages) {
         if (message.ts === undefined) continue;
 
-        let date = new Date(message.ts);
+        let dateStr;
+        const date = new Date(message.ts);
         if (showMinutes && showSeconds) {
-            date = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            dateStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
         } else if (showMinutes) {
-            date = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            dateStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         } else {
-            // solo ora (per range lunghi)
-            date = date.toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit' });
+            dateStr = date.toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit' });
         }
 
-        obj.data.labels.push(date);
+        obj.data.labels.push(dateStr);
         obj.data.datasets[0].data.push(message.value);
 
         if (obj.data.labels.length > maxPoints) {
             obj.data.labels.shift();
             obj.data.datasets[0].data.shift();
         }
+    }
 
-        if (obj.data.labels.length === 0 || obj.data.datasets[0].data.length === 0) {
-            if (obj.canvas) obj.canvas.style.display = 'none';
-            if (noDataDiv) noDataDiv.style.display = 'flex';
+    const hasData = obj.data.labels.length > 0;
 
-            if (isLiveChart && liveCircle) {
-                liveCircle.style.display = 'none';
+    if (!hasData) {
+        if (obj.canvas) obj.canvas.style.display = 'none';
+        if (noDataDiv) noDataDiv.style.display = 'flex';
+        if (isLive && liveCircle) { liveCircle.style.display = 'none'; liveCircle.classList.remove('flash'); }
+        if (obj.chart) { obj.chart.destroy(); obj.chart = null; }
+    } else {
+        if (obj.canvas) obj.canvas.style.display = 'block';
+        if (noDataDiv) noDataDiv.style.display = 'none';
+
+        if (isLive && liveCircle) {
+            liveCircle.style.display = 'flex';
+            liveCircle.classList.add('flash');
+            if (liveCircleTimeout) clearTimeout(liveCircleTimeout);
+            liveCircleTimeout = setTimeout(() => {
                 liveCircle.classList.remove('flash');
-                if (liveCircleTimeout) {
-                    clearTimeout(liveCircleTimeout);
-                    liveCircleTimeout = null;
-                }
-            }
+                liveCircle.style.display = 'none';
+            }, noDataTimeout);
+        }
 
-            if (obj.chart) {
-                obj.chart.destroy();
-                obj.chart = null;
-            }
+        if (!obj.chart) {
+            obj.chart = newChart(obj.canvas.getContext('2d'), obj, obj.sensorKey);
         } else {
-            if (obj.canvas) obj.canvas.style.display = 'block';
-            if (noDataDiv) noDataDiv.style.display = 'none';
-
-            if (isLiveChart && liveCircle) {
-                liveCircle.style.display = 'flex';
-                liveCircle.classList.add('flash');
-
-                if (liveCircleTimeout) clearTimeout(liveCircleTimeout);
-                liveCircleTimeout = setTimeout(() => {
-                    liveCircle.classList.remove('flash');
-                    liveCircle.style.display = 'none';
-                }, noDataTimeout);
-            }
-
-            if (!obj.chart) {
-                obj.chart = newChart(obj.canvas.getContext('2d'), obj);
-            } else {
-                obj.chart.update();
-            }
+            obj.chart.update();
         }
     }
 }
 
-function newChart(ctx, obj) {
-    return new Chart(ctx, {
-        type: 'line',
-        data: obj.data,
-        options: {
-            responsive: true,
-            animation: false,
-            scales: {
-                y: {},
-                x: {
-                    grid: { display: false },
-                    ticks: { maxRotation: 45, minRotation: 45 }
-                }
-            },
-            interaction: {
-                mode: 'index',
-                intersect: false
-            },
-            plugins: {
-                legend: { display: false },
-                tooltip: {
-                    displayColors: false,
-                    callbacks: {
-                        title: () => '',
-                        label: function (context) {
-                            const unit = context.chart && context.chart.options && context.chart.options._unit
-                                ? context.chart.options._unit
-                                : (obj.unit || '');
-                            if (!context.chart.options._unit) context.chart.options._unit = obj.unit;
-                            return `${context.label} - ${context.parsed.y.toFixed(2)} ${unit}`;
-                        }
-                    }
+function newChart(ctx, obj, sensorKey) {
+    const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+    const gridColor = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.08)';
+    const tickColor = isDark ? '#8899a6' : '#666';
+
+    const opts = {
+        responsive: true,
+        animation: false,
+        scales: {
+            y: { grid: { color: gridColor }, ticks: { color: tickColor } },
+            x: { grid: { display: false }, ticks: { maxRotation: 45, minRotation: 45, color: tickColor } },
+        },
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+            legend: { display: false },
+            tooltip: {
+                displayColors: false,
+                callbacks: {
+                    title: () => '',
+                    label: (context) => `${context.label} \u2014 ${context.parsed.y.toFixed(2)} ${obj.unit || ''}`,
                 },
-                noDataMessage: true
-            }
-        }
-    });
+            },
+        },
+    };
+
+    // Range band annotation
+    const band = RANGE_BANDS[sensorKey];
+    if (band) {
+        opts.plugins.annotation = {
+            annotations: {
+                optimalBand: {
+                    type: 'box',
+                    yMin: band.min,
+                    yMax: band.max,
+                    backgroundColor: band.color,
+                    borderWidth: 0,
+                },
+            },
+        };
+    }
+
+    return new Chart(ctx, { type: 'line', data: obj.data, options: opts });
 }
 
 function newChartData(borderColor, backgroundColor) {
@@ -379,7 +657,81 @@ function newChartData(borderColor, backgroundColor) {
             data: [],
             borderColor: borderColor,
             backgroundColor: backgroundColor,
+            borderWidth: 2,
+            pointRadius: 2,
+            tension: 0.3,
             fill: true,
-        }]
+        }],
     };
+}
+
+/* ================================================================
+ *  COMMANDS
+ * ================================================================ */
+
+async function sendCommand(cmd) {
+    try {
+        const response = await fetch(`http://${window.location.host}/api/command/${cmd}`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = await response.json();
+        console.log('Command OK:', cmd, data);
+    } catch (error) {
+        console.error('Command failed:', cmd, error);
+        alert('Comando fallito: ' + error.message);
+    }
+}
+
+/* ================================================================
+ *  THEME
+ * ================================================================ */
+
+function initTheme() {
+    const saved = localStorage.getItem('hydro-theme') || 'dark';
+    document.documentElement.setAttribute('data-theme', saved);
+    updateToggleIcon(saved);
+}
+
+function toggleTheme() {
+    const current = document.documentElement.getAttribute('data-theme');
+    const next = current === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    localStorage.setItem('hydro-theme', next);
+    updateToggleIcon(next);
+    applyChartTheme();
+}
+
+function updateToggleIcon(theme) {
+    const btn = document.getElementById('theme-toggle');
+    if (btn) btn.textContent = theme === 'dark' ? '\u2600\ufe0f' : '\ud83c\udf19';
+}
+
+function applyChartTheme() {
+    const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+    const gridColor = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.08)';
+    const tickColor = isDark ? '#8899a6' : '#666';
+
+    Chart.defaults.color = tickColor;
+    Chart.defaults.borderColor = gridColor;
+
+    // Update all existing charts
+    for (const tabId of Object.keys(charts)) {
+        for (const key of Object.keys(charts[tabId])) {
+            const c = charts[tabId][key].chart;
+            if (c) {
+                c.options.scales.y.grid.color = gridColor;
+                c.options.scales.y.ticks.color = tickColor;
+                c.options.scales.x.ticks.color = tickColor;
+                c.update();
+            }
+        }
+    }
+}
+
+/* ================================================================
+ *  HELPERS
+ * ================================================================ */
+
+function fmtTs(ts) {
+    const d = new Date(ts);
+    return d.toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
