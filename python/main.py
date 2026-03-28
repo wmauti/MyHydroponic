@@ -9,6 +9,7 @@ from arduino.app_bricks.dbstorage_tsstore import TimeSeriesStore
 from arduino.app_bricks.web_ui import WebUI
 from arduino.app_utils import App, Bridge
 from DFRobot_PH import DFRobot_PH
+import time_manager
 from time_manager import get_current_time
 
 PHDATA_PATH = "phdata.txt"
@@ -54,6 +55,7 @@ def ensure_phdata_exists():
 
 # Istanza bridge verso Arduino
 bridge = Bridge()
+time_manager.init(bridge)
 
 # Time-series DB
 db = TimeSeriesStore()
@@ -286,34 +288,24 @@ def stop_all_dosing():
     bridge.call("nutrients_off")
 
 # =============================================================
-# LCD CHIAMATE
+# OLED CHIAMATE (via Bridge RPC)
+# Lo sketch espone: oled_set_state, oled_msg1, oled_msg2,
+#                   oled_clear_msg, oled_push_sensors
 # =============================================================
 
-def lcd_clear():
-    bridge.call("lcd_clear")
-
-def lcd_print_line1(text: str):
-    bridge.call("lcd_print_line1", text[:16])
-
-def lcd_print_line2(text: str):
-    bridge.call("lcd_print_line2", text[:16])
-
 def lcd_show_status(code: int):
-    lcd_clear()
-    bridge.call("lcd_show_status", int(code))
+    """Aggiorna la zona stato dell'OLED."""
+    try:
+        bridge.call("oled_set_state", int(code))
+    except Exception as e:
+        print(f"[OLED] Errore oled_set_state: {e}")
 
-def update_lcd_from_sensors():
-    # usa direttamente get_sensor_data (ritorna gli stessi valori usati sotto)
-    temp_c, ec_v, ph_mv, float_ok = bridge.call("get_sensor_data")
-
-    # Riga 1: T e livello acqua
-    line1 = f"T:{temp_c:4.1f}C H2O:{'OK ' if float_ok >= 0.5 else 'LOW'}"
-
-    # Riga 2: EC e pH (ridotto a 16 char)
-    line2 = f"EC:{ec_v:4.2f}V pH:{ph_mv/1000:4.2f}"
-
-    lcd_print_line1(line1)
-    lcd_print_line2(line2)
+def oled_push_sensors(temp_c, ph_value, ec_ms, float_ok_bool):
+    """Invia i dati sensore all'OLED (zona slide)."""
+    try:
+        bridge.call("oled_push_sensors", [float(temp_c), float(ph_value), float(ec_ms), 1.0 if float_ok_bool else 0.0])
+    except Exception as e:
+        print(f"[OLED] Errore oled_push_sensors: {e}")
 
 # =========================
 # Loop principale
@@ -375,8 +367,8 @@ def main_loop():
             f"Float_OK={float_ok_bool}"
         )
 
-        # 3.b Aggiornamento LCD da Python
-        update_lcd_from_sensors()
+        # 3.b Aggiornamento OLED da Python (sensori già calcolati)
+        oled_push_sensors(temperature_c, ph_value, ec_ms, float_ok_bool)
 
         # 4. MACCHINA A STATI
         lvl_ok = float_ok_bool
