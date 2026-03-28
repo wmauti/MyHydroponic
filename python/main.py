@@ -1,6 +1,7 @@
 import datetime
 import math
 import time
+import threading
 from enum import Enum
 from zoneinfo import ZoneInfo
 import os
@@ -156,6 +157,117 @@ def on_update_config(ph_min: str = "", ph_max: str = "", ec_min: str = "", ec_ma
         return {"status": "error", "message": str(e)}
 
 ui.expose_api("GET", "/api/config/update", on_update_config)
+
+# ── Dosaggio manuale (rispetta soglie + safety) ──────────────────
+MANUAL_DOSE_SEC = 5          # durata singola attivazione pompa (secondi)
+MANUAL_DOSE_COOLDOWN = 60    # cooldown tra dosaggi manuali (secondi)
+_last_manual_dose_ts = 0
+
+def _get_latest_sensors():
+    """Legge sensori correnti per verifica safety."""
+    try:
+        data = bridge.call("get_sensor_data")
+        temp_c, ec_v, ph_mv, float_ok = [float(x) for x in data]
+        ph_val = ph_sensor.read_PH(ph_mv, temp_c)
+        ec_val = ec_from_voltage(ec_v, temp_c)
+        return {"ph": ph_val, "ec": ec_val, "temp": temp_c, "level": float_ok >= 0.5}
+    except Exception as e:
+        print(f"[MANUAL] Errore lettura sensori: {e}")
+        return None
+
+def on_manual_dose(pump: str, duration: str = ""):
+    """
+    Dosaggio manuale singola pompa.
+    pump = 'ph_down' | 'nutrients'
+    Rispetta: soglie min/max, cooldown, stato FSM (solo da IDLE).
+    """
+    global _last_manual_dose_ts
+
+    dose_sec = int(duration) if duration else MANUAL_DOSE_SEC
+    dose_sec = max(1, min(dose_sec, 30))  # clamp 1-30s
+
+    # 1) Solo da IDLE
+    if state != State.IDLE:
+        return {"status": "error", "message": f"FSM in {state.name}, attendere IDLE"}
+
+    # 2) Cooldown
+    elapsed = time.time() - _last_manual_dose_ts
+    if elapsed < MANUAL_DOSE_COOLDOWN:
+        remaining = int(MANUAL_DOSE_COOLDOWN - elapsed)
+        return {"status": "error", "message": f"Cooldown attivo, attendere {remaining}s"}
+
+    # 3) Lettura sensori per safety check
+    sensors = _get_latest_sensors()
+    if sensors is None:
+        return {"status": "error", "message": "Impossibile leggere sensori"}
+
+    if not sensors["level"]:
+        return {"status": "error", "message": "Livello acqua basso, dosaggio non sicuro"}
+
+    # 4) Verifica soglie
+    if pump == "ph_down":
+        if sensors["ph"] <= PH_MIN:
+            return {"status": "error", "message": f"pH gia basso ({sensors['ph']:.2f} <= {PH_MIN}), non serve pH down"}
+        print(f"[MANUAL] pH down manuale per {dose_sec}s (pH attuale: {sensors['ph']:.2f})")
+        bridge.call("ph_down_on")
+        set_pump("ph_down", True)
+
+    elif pump == "nutrients":
+        if sensors["ec"] >= EC_MAX:
+            return {"status": "error", "message": f"EC gia alto ({sensors['ec']:.3f} >= {EC_MAX}), non serve nutrienti"}
+        print(f"[MANUAL] Nutrienti manuali per {dose_sec}s (EC attuale: {sensors['ec']:.3f})")
+        bridge.call("nutrients_on")
+        set_pump("nutrients", True)
+
+    else:
+        return {"status": "error", "message": f"Pompa '{pump}' non valida (usa ph_down o nutrients)"}
+
+    # 5) Timer: spegni dopo dose_sec
+    _last_manual_dose_ts = time.time()
+
+    def _stop_manual_dose():
+        time.sleep(dose_sec)
+        if pump == "ph_down":
+            bridge.call("ph_down_off")
+            set_pump("ph_down", False)
+            print(f"[MANUAL] pH down OFF dopo {dose_sec}s")
+        elif pump == "nutrients":
+            bridge.call("nutrients_off")
+            set_pump("nutrients", False)
+            print(f"[MANUAL] Nutrienti OFF dopo {dose_sec}s")
+
+    threading.Thread(target=_stop_manual_dose, daemon=True).start()
+
+    return {
+        "status": "ok",
+        "pump": pump,
+        "duration": dose_sec,
+        "sensors_before": {
+            "ph": round(sensors["ph"], 2),
+            "ec": round(sensors["ec"], 3),
+        },
+    }
+
+ui.expose_api("GET", "/api/manual_dose/{pump}", on_manual_dose)
+ui.expose_api("GET", "/api/manual_dose/{pump}/{duration}", on_manual_dose)
+
+# Endpoint per leggere sensori attuali (usato dalla UI per feedback)
+def on_current_sensors():
+    sensors = _get_latest_sensors()
+    if sensors is None:
+        return {"status": "error"}
+    return {
+        "status": "ok",
+        "ph": round(sensors["ph"], 2),
+        "ec": round(sensors["ec"], 3),
+        "temp": round(sensors["temp"], 1),
+        "level": sensors["level"],
+        "thresholds": {"ph_min": PH_MIN, "ph_max": PH_MAX, "ec_min": EC_MIN, "ec_max": EC_MAX},
+        "fsm_state": state.name,
+        "cooldown_remaining": max(0, int(MANUAL_DOSE_COOLDOWN - (time.time() - _last_manual_dose_ts))),
+    }
+
+ui.expose_api("GET", "/api/current_sensors", on_current_sensors)
 
 # Timezone
 tz = ZoneInfo("Europe/Rome")

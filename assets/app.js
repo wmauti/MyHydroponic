@@ -132,10 +132,14 @@ function switchTab(tab) {
     document.querySelector(`.tab[data-tab="${tab.id}"]`).classList.add('active');
     document.getElementById(`tab-${tab.id}`).classList.add('active');
 
+    // Stop dose refresh when leaving dosaggi tab
+    stopDoseRefresh();
+
     if (!tab.isLive && !tab.isDosaggi && !tab.isSettings) {
         loadHistoricalTab(tab);
     } else if (tab.isDosaggi) {
         loadDosaggiTab();
+        startDoseRefresh();
     } else if (tab.isSettings) {
         loadSystemStatus();
     }
@@ -216,6 +220,51 @@ function buildDosaggiHTML() {
             <div class="kpi-card kpi-card-sm"><div class="kpi-label">Durata media</div><div class="kpi-value" id="dos-avg-dur">--</div></div>
             <div class="kpi-card kpi-card-sm"><div class="kpi-label">Intervallo medio</div><div class="kpi-value" id="dos-avg-int">--</div></div>
             <div class="kpi-card kpi-card-sm"><div class="kpi-label">Efficacia</div><div class="kpi-value" id="dos-eff">--%</div></div>
+        </div>
+
+        <!-- DOSAGGIO MANUALE -->
+        <div class="container dosaggi-table-container manual-dose-panel">
+            <div class="graph-header"><span>Dosaggio manuale</span></div>
+            <div class="manual-dose-status" id="manual-dose-status">
+                <div class="dose-sensor-row">
+                    <div class="dose-sensor-item">
+                        <span class="dose-sensor-label">pH attuale</span>
+                        <span class="dose-sensor-value" id="dose-ph-current">--</span>
+                        <span class="dose-sensor-range" id="dose-ph-range">range --</span>
+                    </div>
+                    <div class="dose-sensor-item">
+                        <span class="dose-sensor-label">EC attuale</span>
+                        <span class="dose-sensor-value" id="dose-ec-current">--</span>
+                        <span class="dose-sensor-range" id="dose-ec-range">range --</span>
+                    </div>
+                    <div class="dose-sensor-item">
+                        <span class="dose-sensor-label">Stato</span>
+                        <span class="dose-sensor-value" id="dose-fsm-state">--</span>
+                    </div>
+                    <div class="dose-sensor-item">
+                        <span class="dose-sensor-label">Cooldown</span>
+                        <span class="dose-sensor-value" id="dose-cooldown">--</span>
+                    </div>
+                </div>
+            </div>
+            <div class="manual-dose-controls">
+                <div class="dose-control-group">
+                    <label class="dose-control-label">Durata (s)</label>
+                    <input type="range" id="dose-duration" min="1" max="30" value="5" oninput="updateDoseDurationLabel()">
+                    <span class="dose-duration-value" id="dose-duration-label">5s</span>
+                </div>
+                <div class="dose-buttons">
+                    <button class="btn btn-dose btn-dose-ph" id="btn-dose-ph" onclick="manualDose('ph_down')">
+                        <span class="dose-btn-icon">&#9878;</span>
+                        pH DOWN
+                    </button>
+                    <button class="btn btn-dose btn-dose-ec" id="btn-dose-ec" onclick="manualDose('nutrients')">
+                        <span class="dose-btn-icon">&#9883;</span>
+                        NUTRIENTI
+                    </button>
+                </div>
+            </div>
+            <div class="dose-feedback" id="dose-feedback" style="display:none"></div>
         </div>
 
         <div class="container dosaggi-table-container">
@@ -816,6 +865,132 @@ async function saveConfig() {
     } catch (e) {
         alert('Errore di connessione: ' + e.message);
     }
+}
+
+/* ================================================================
+ *  MANUAL DOSING
+ * ================================================================ */
+
+let _doseRefreshTimer = null;
+
+function updateDoseDurationLabel() {
+    const slider = document.getElementById('dose-duration');
+    const label = document.getElementById('dose-duration-label');
+    if (slider && label) label.textContent = slider.value + 's';
+}
+
+async function refreshDoseSensors() {
+    try {
+        const resp = await fetch(`http://${window.location.host}/api/current_sensors`);
+        if (!resp.ok) return;
+        const d = await resp.json();
+        if (d.status !== 'ok') return;
+
+        const el = (id) => document.getElementById(id);
+
+        // pH
+        const phEl = el('dose-ph-current');
+        if (phEl) {
+            phEl.textContent = d.ph.toFixed(2);
+            phEl.className = 'dose-sensor-value' +
+                (d.ph < d.thresholds.ph_min ? ' dose-low' : d.ph > d.thresholds.ph_max ? ' dose-high' : ' dose-ok');
+        }
+        if (el('dose-ph-range')) el('dose-ph-range').textContent = `${d.thresholds.ph_min} - ${d.thresholds.ph_max}`;
+
+        // EC
+        const ecEl = el('dose-ec-current');
+        if (ecEl) {
+            ecEl.textContent = d.ec.toFixed(3);
+            ecEl.className = 'dose-sensor-value' +
+                (d.ec < d.thresholds.ec_min ? ' dose-low' : d.ec > d.thresholds.ec_max ? ' dose-high' : ' dose-ok');
+        }
+        if (el('dose-ec-range')) el('dose-ec-range').textContent = `${d.thresholds.ec_min} - ${d.thresholds.ec_max}`;
+
+        // FSM state
+        if (el('dose-fsm-state')) {
+            el('dose-fsm-state').textContent = d.fsm_state;
+            el('dose-fsm-state').className = 'dose-sensor-value' + (d.fsm_state === 'IDLE' ? ' dose-ok' : ' dose-warn');
+        }
+
+        // Cooldown
+        if (el('dose-cooldown')) {
+            el('dose-cooldown').textContent = d.cooldown_remaining > 0 ? d.cooldown_remaining + 's' : 'Pronto';
+            el('dose-cooldown').className = 'dose-sensor-value' + (d.cooldown_remaining > 0 ? ' dose-warn' : ' dose-ok');
+        }
+
+        // Enable/disable buttons
+        const canDose = d.fsm_state === 'IDLE' && d.cooldown_remaining === 0 && d.level;
+        const btnPh = el('btn-dose-ph');
+        const btnEc = el('btn-dose-ec');
+        if (btnPh) {
+            btnPh.disabled = !canDose || d.ph <= d.thresholds.ph_min;
+            if (d.ph <= d.thresholds.ph_min) btnPh.title = `pH gia basso (${d.ph.toFixed(2)})`;
+            else if (!canDose) btnPh.title = 'Attendere stato IDLE e cooldown';
+            else btnPh.title = '';
+        }
+        if (btnEc) {
+            btnEc.disabled = !canDose || d.ec >= d.thresholds.ec_max;
+            if (d.ec >= d.thresholds.ec_max) btnEc.title = `EC gia alto (${d.ec.toFixed(3)})`;
+            else if (!canDose) btnEc.title = 'Attendere stato IDLE e cooldown';
+            else btnEc.title = '';
+        }
+    } catch (e) {
+        console.log('Dose sensor refresh error:', e.message);
+    }
+}
+
+async function manualDose(pump) {
+    const duration = document.getElementById('dose-duration')?.value || '5';
+    const feedback = document.getElementById('dose-feedback');
+    const btn = document.getElementById(pump === 'ph_down' ? 'btn-dose-ph' : 'btn-dose-ec');
+
+    if (btn) { btn.disabled = true; btn.classList.add('dosing-active'); }
+    if (feedback) { feedback.style.display = 'block'; feedback.className = 'dose-feedback dose-feedback-pending'; feedback.textContent = `Dosaggio ${pump === 'ph_down' ? 'pH Down' : 'Nutrienti'} in corso (${duration}s)...`; }
+
+    try {
+        const resp = await fetch(`http://${window.location.host}/api/manual_dose/${pump}/${duration}`);
+        const data = await resp.json();
+
+        if (data.status === 'ok') {
+            if (feedback) {
+                feedback.className = 'dose-feedback dose-feedback-ok';
+                feedback.textContent = `Dosaggio avviato: ${pump === 'ph_down' ? 'pH Down' : 'Nutrienti'} per ${data.duration}s (pH: ${data.sensors_before.ph}, EC: ${data.sensors_before.ec})`;
+            }
+            // Attendi fine dosaggio poi aggiorna sensori
+            setTimeout(() => {
+                refreshDoseSensors();
+                if (btn) btn.classList.remove('dosing-active');
+            }, (data.duration + 2) * 1000);
+        } else {
+            if (feedback) {
+                feedback.className = 'dose-feedback dose-feedback-err';
+                feedback.textContent = data.message;
+            }
+            if (btn) btn.classList.remove('dosing-active');
+        }
+    } catch (e) {
+        if (feedback) {
+            feedback.className = 'dose-feedback dose-feedback-err';
+            feedback.textContent = 'Errore di connessione: ' + e.message;
+        }
+        if (btn) btn.classList.remove('dosing-active');
+    }
+
+    // Auto-hide feedback dopo 10s
+    setTimeout(() => {
+        if (feedback) feedback.style.display = 'none';
+    }, 10000);
+}
+
+/* Start/stop dose sensor refresh when dosaggi tab is shown */
+function startDoseRefresh() {
+    refreshDoseSensors();
+    if (_doseRefreshTimer) clearInterval(_doseRefreshTimer);
+    _doseRefreshTimer = setInterval(refreshDoseSensors, 5000);
+}
+
+function stopDoseRefresh() {
+    if (_doseRefreshTimer) { clearInterval(_doseRefreshTimer); _doseRefreshTimer = null; }
 }
 
 /* ================================================================

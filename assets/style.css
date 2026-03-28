@@ -739,6 +739,185 @@ body {
 }
 
 /* ================================================================
+ *  MANUAL DOSING PANEL
+ * ================================================================ */
+
+.manual-dose-panel {
+    border-top: 3px solid #e67e22;
+}
+
+.dose-sensor-row {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+}
+
+.dose-sensor-item {
+    flex: 1;
+    min-width: 100px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px 12px;
+    background: var(--bg-card-glass);
+    border: 1px solid var(--border-card);
+    border-radius: 8px;
+}
+
+.dose-sensor-label {
+    font-size: 10px;
+    color: var(--text-muted);
+    font-family: 'Roboto Mono', monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+}
+
+.dose-sensor-value {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text-primary);
+    font-family: 'Roboto Mono', monospace;
+}
+
+.dose-sensor-value.dose-ok   { color: #2ecc71; }
+.dose-sensor-value.dose-low  { color: #e74c3c; }
+.dose-sensor-value.dose-high { color: #e74c3c; }
+.dose-sensor-value.dose-warn { color: #f39c12; }
+
+.dose-sensor-range {
+    font-size: 10px;
+    color: var(--text-muted);
+    font-family: 'Roboto Mono', monospace;
+}
+
+.manual-dose-controls {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    flex-wrap: wrap;
+}
+
+.dose-control-group {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.dose-control-label {
+    font-size: 12px;
+    color: var(--text-secondary);
+    font-family: 'Open Sans', sans-serif;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.dose-control-group input[type="range"] {
+    width: 120px;
+    accent-color: var(--accent);
+    cursor: pointer;
+}
+
+.dose-duration-value {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--accent);
+    font-family: 'Roboto Mono', monospace;
+    min-width: 32px;
+}
+
+.dose-buttons {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.btn-dose {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border: none;
+    border-radius: 8px;
+    padding: 10px 18px;
+    font-family: 'Open Sans', sans-serif;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    color: #fff;
+    letter-spacing: 0.5px;
+    transition: all 0.2s ease;
+    outline: none;
+}
+
+.btn-dose:active { transform: translateY(1px); }
+
+.btn-dose:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.btn-dose-ph {
+    background: linear-gradient(135deg, #e67e22 0%, #d35400 100%);
+}
+
+.btn-dose-ph:hover:not(:disabled) {
+    background: linear-gradient(135deg, #d35400 0%, #c0392b 100%);
+    box-shadow: 0 2px 12px rgba(230, 126, 34, 0.4);
+}
+
+.btn-dose-ec {
+    background: linear-gradient(135deg, #27ae60 0%, #1e8449 100%);
+}
+
+.btn-dose-ec:hover:not(:disabled) {
+    background: linear-gradient(135deg, #1e8449 0%, #196f3d 100%);
+    box-shadow: 0 2px 12px rgba(39, 174, 96, 0.4);
+}
+
+.btn-dose.dosing-active {
+    animation: dose-pulse 0.8s ease-in-out infinite;
+}
+
+@keyframes dose-pulse {
+    0%, 100% { opacity: 1; box-shadow: none; }
+    50% { opacity: 0.7; box-shadow: 0 0 16px rgba(255, 255, 255, 0.3); }
+}
+
+.dose-btn-icon {
+    font-size: 16px;
+}
+
+/* Feedback bar */
+.dose-feedback {
+    margin-top: 12px;
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-family: 'Roboto Mono', monospace;
+    font-weight: 600;
+    transition: all 0.3s ease;
+}
+
+.dose-feedback-pending {
+    background: rgba(243, 156, 18, 0.12);
+    color: #f39c12;
+    border: 1px solid rgba(243, 156, 18, 0.25);
+}
+
+.dose-feedback-ok {
+    background: rgba(46, 204, 113, 0.12);
+    color: #2ecc71;
+    border: 1px solid rgba(46, 204, 113, 0.25);
+}
+
+.dose-feedback-err {
+    background: rgba(231, 76, 60, 0.12);
+    color: #e74c3c;
+    border: 1px solid rgba(231, 76, 60, 0.25);
+}
+
+/* ================================================================
  *  SETTINGS TAB
  * ================================================================ */
 
@@ -961,6 +1140,11 @@ body {
     .pump-info { margin-left: 0; }
     .settings-grid { grid-template-columns: 1fr; }
     .sysinfo-grid { grid-template-columns: repeat(2, 1fr); }
+    .dose-sensor-row { gap: 8px; }
+    .dose-sensor-item { min-width: 80px; }
+    .manual-dose-controls { flex-direction: column; align-items: stretch; }
+    .dose-buttons { justify-content: center; }
+    .btn-dose { flex: 1; justify-content: center; min-height: 44px; }
 }
 
 @media (max-width: 480px) {
