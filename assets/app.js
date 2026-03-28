@@ -1,709 +1,599 @@
+/* ================================================================
+ *  MyHydroponic — Web UI  (app.js)
+ *  Registry-driven: sensors, tabs, charts, KPI, dosaggi, CSV export
+ * ================================================================ */
+
 const socket = io(`http://${window.location.host}`);
 
-// ── Chart color palette (dark-theme friendly) ──
-const COLORS = {
-    temp: { border: '#ff8c42', bg: 'rgba(255,140,66,0.10)', glow: 'rgba(255,140,66,0.3)' },
-    ec: { border: '#00b8a9', bg: 'rgba(0,184,169,0.08)', glow: 'rgba(0,184,169,0.3)' },
-    ph: { border: '#2ecc71', bg: 'rgba(46,204,113,0.08)', glow: 'rgba(46,204,113,0.3)' },
-    level: { border: '#a855f7', bg: 'rgba(168,85,247,0.06)', glow: 'rgba(168,85,247,0.3)' },
+/* ---------- SENSOR REGISTRY ---------- */
+const SENSORS = {
+    temp:  { resource: 'temp_c',   wsEvent: 'temp_c',   label: 'Temp soluzione (\u00b0C)', unit: '\u00b0C',    color: '#ff9800', fill: 'rgba(255,152,0,0.12)' },
+    ec:    { resource: 'ec_ms',    wsEvent: 'ec_ms',     label: 'EC (mS/cm)',          unit: 'mS/cm', color: '#00bcd4', fill: 'rgba(0,188,212,0.10)' },
+    ph:    { resource: 'ph_value', wsEvent: 'ph_value',  label: 'pH',                  unit: '',      color: '#4caf50', fill: 'rgba(76,175,80,0.10)' },
+    phmv:  { resource: 'ph_mv',    wsEvent: 'ph_mv',     label: 'pH (mV)',             unit: 'mV',    color: '#f44336', fill: 'rgba(244,67,54,0.10)' },
+    level: { resource: 'float_ok', wsEvent: 'float_ok',  label: 'Livello',             unit: '',      color: '#ab47bc', fill: 'rgba(171,71,188,0.10)' },
 };
 
-// Live charts
-const tempLive = { canvas: null, chart: null, data: newChartData(COLORS.temp), unit: '°C' };
-const ecLive = { canvas: null, chart: null, data: newChartData(COLORS.ec), unit: 'mS/cm' };
-const phLive = { canvas: null, chart: null, data: newChartData(COLORS.ph), unit: '' };
-const levelLive = { canvas: null, chart: null, data: newChartData(COLORS.level), unit: '' };
+const TOP_ROW_SENSORS    = ['temp', 'ec'];
+const BOTTOM_ROW_SENSORS = ['ph', 'phmv', 'level'];
+const KPI_SENSORS        = ['temp', 'ec', 'ph', 'level'];
 
-// Storico 1h
-const temp1h = { canvas: null, chart: null, data: newChartData(COLORS.temp), unit: '°C' };
-const ec1h = { canvas: null, chart: null, data: newChartData(COLORS.ec), unit: 'mS/cm' };
-const ph1h = { canvas: null, chart: null, data: newChartData(COLORS.ph), unit: '' };
-const level1h = { canvas: null, chart: null, data: newChartData(COLORS.level), unit: '' };
+/* ---------- RANGE BANDS (chartjs-plugin-annotation) ---------- */
+const RANGE_BANDS = {
+    ph:   { min: 5.5, max: 6.5, color: 'rgba(76,175,80,0.13)' },
+    ec:   { min: 1.0, max: 2.0, color: 'rgba(0,188,212,0.13)' },
+    temp: { min: 18,  max: 26,  color: 'rgba(255,152,0,0.13)' },
+};
 
-// Storico 1d
-const temp1d = { canvas: null, chart: null, data: newChartData(COLORS.temp), unit: '°C' };
-const ec1d = { canvas: null, chart: null, data: newChartData(COLORS.ec), unit: 'mS/cm' };
-const ph1d = { canvas: null, chart: null, data: newChartData(COLORS.ph), unit: '' };
-const level1d = { canvas: null, chart: null, data: newChartData(COLORS.level), unit: '' };
+/* ---------- KPI ALERT THRESHOLDS ---------- */
+const KPI_ALERTS = {
+    ph:   { min: 5.5, max: 6.5 },
+    ec:   { min: 1.0, max: 2.0 },
+    temp: { min: 18,  max: 26  },
+};
 
-// Storico 7d
-const temp7d = { canvas: null, chart: null, data: newChartData(COLORS.temp), unit: '°C' };
-const ec7d = { canvas: null, chart: null, data: newChartData(COLORS.ec), unit: 'mS/cm' };
-const ph7d = { canvas: null, chart: null, data: newChartData(COLORS.ph), unit: '' };
-const level7d = { canvas: null, chart: null, data: newChartData(COLORS.level), unit: '' };
+/* ---------- PUMP NAMES ---------- */
+const PUMP_NAMES = ['irrigation', 'ph_down', 'nutrients', 'recirculation', 'refill'];
 
-// Storico 14d
-const temp14d = { canvas: null, chart: null, data: newChartData(COLORS.temp), unit: '°C' };
-const ec14d = { canvas: null, chart: null, data: newChartData(COLORS.ec), unit: 'mS/cm' };
-const ph14d = { canvas: null, chart: null, data: newChartData(COLORS.ph), unit: '' };
-const level14d = { canvas: null, chart: null, data: newChartData(COLORS.level), unit: '' };
+/* ---------- TAB CONFIG ---------- */
+const TABS = [
+    { id: '1y',  label: '1 anno', start: '-365d', aggr: '1d',  maxPts: 400, showMin: false, showSec: false },
+    { id: '1m',  label: '1 mese', start: '-30d',  aggr: '6h',  maxPts: 200, showMin: false, showSec: false },
+    { id: '14d', label: '14 gg',  start: '-14d',  aggr: '2h',  maxPts: 200, showMin: false, showSec: false },
+    { id: '7d',  label: '7 gg',   start: '-7d',   aggr: '1h',  maxPts: 200, showMin: false, showSec: false },
+    { id: '1d',  label: '1 D',    start: '-1d',   aggr: '1h',  maxPts: 24,  showMin: true,  showSec: false },
+    { id: '1h',  label: '1 h',    start: '-1h',   aggr: '5m',  maxPts: 12,  showMin: true,  showSec: true  },
+    { id: 'live',     label: 'Live',     isLive: true },
+    { id: 'dosaggi',  label: 'Dosaggi',  isDosaggi: true },
+    { id: 'settings', label: 'Sistema',  isSettings: true },
+];
 
-// Storico 1m
-const temp1m = { canvas: null, chart: null, data: newChartData(COLORS.temp), unit: '°C' };
-const ec1m = { canvas: null, chart: null, data: newChartData(COLORS.ec), unit: 'mS/cm' };
-const ph1m = { canvas: null, chart: null, data: newChartData(COLORS.ph), unit: '' };
-const level1m = { canvas: null, chart: null, data: newChartData(COLORS.level), unit: '' };
+/* ---------- FSM STATE MAP ---------- */
+const FSM_STATES = {
+    0: { name: 'IDLE',          color: '#2ecc71' },
+    1: { name: 'REFILLING',     color: '#e74c3c' },
+    2: { name: 'IRRIGATING',    color: '#3498db' },
+    3: { name: 'DOSING',        color: '#e74c3c' },
+    4: { name: 'MIXING',        color: '#f39c12' },
+    5: { name: 'RECIRCULATING', color: '#9b59b6' },
+    6: { name: 'ERROR',         color: '#c0392b' },
+    7: { name: 'DRAINING',      color: '#95a5a6' },
+};
 
-// Storico 1y
-const temp1y = { canvas: null, chart: null, data: newChartData(COLORS.temp), unit: '°C' };
-const ec1y = { canvas: null, chart: null, data: newChartData(COLORS.ec), unit: 'mS/cm' };
-const ph1y = { canvas: null, chart: null, data: newChartData(COLORS.ph), unit: '' };
-const level1y = { canvas: null, chart: null, data: newChartData(COLORS.level), unit: '' };
+/* ---------- CHART STORE ---------- */
+// charts[tabId][sensorKey] = { canvas, chart, data }
+const charts = {};
+
+/* ---------- KPI STATE ---------- */
+const kpiState = {};
+KPI_SENSORS.forEach(k => { kpiState[k] = { current: null, prev: null, history: [] }; });
 
 let liveCircleTimeout = null;
 const noDataTimeout = 10000;
 let errorContainer;
 
+/* ================================================================
+ *  DOM GENERATION
+ * ================================================================ */
+
 document.addEventListener('DOMContentLoaded', () => {
-    // Mappa i canvas esistenti
-
-    // Live
-    tempLive.canvas = document.getElementById('temperature-live-chart');
-    ecLive.canvas = document.getElementById('humidity-live-chart');
-    phLive.canvas = document.getElementById('dew_point-live-chart');
-    levelLive.canvas = document.getElementById('absolute_humidity-live-chart');
-
-    // 1h
-    temp1h.canvas = document.getElementById('temperature-1h-chart');
-    ec1h.canvas = document.getElementById('humidity-1h-chart');
-    ph1h.canvas = document.getElementById('dew_point-1h-chart');
-    level1h.canvas = document.getElementById('absolute_humidity-1h-chart');
-
-    // 1d
-    temp1d.canvas = document.getElementById('temperature-1d-chart');
-    ec1d.canvas = document.getElementById('humidity-1d-chart');
-    ph1d.canvas = document.getElementById('dew_point-1d-chart');
-    level1d.canvas = document.getElementById('absolute_humidity-1d-chart');
-
-    // 7d
-    temp7d.canvas = document.getElementById('temperature-7d-chart');
-    ec7d.canvas = document.getElementById('humidity-7d-chart');
-    ph7d.canvas = document.getElementById('dew_point-7d-chart');
-    level7d.canvas = document.getElementById('absolute_humidity-7d-chart');
-
-    // 14d
-    temp14d.canvas = document.getElementById('temperature-14d-chart');
-    ec14d.canvas = document.getElementById('humidity-14d-chart');
-    ph14d.canvas = document.getElementById('dew_point-14d-chart');
-    level14d.canvas = document.getElementById('absolute_humidity-14d-chart');
-
-    // 1m
-    temp1m.canvas = document.getElementById('temperature-1m-chart');
-    ec1m.canvas = document.getElementById('humidity-1m-chart');
-    ph1m.canvas = document.getElementById('dew_point-1m-chart');
-    level1m.canvas = document.getElementById('absolute_humidity-1m-chart');
-
-    // 1y
-    temp1y.canvas = document.getElementById('temperature-1y-chart');
-    ec1y.canvas = document.getElementById('humidity-1y-chart');
-    ph1y.canvas = document.getElementById('dew_point-1y-chart');
-    level1y.canvas = document.getElementById('absolute_humidity-1y-chart');
-
-    const liveCircle = document.getElementById('live-circle');
-    if (liveCircle) liveCircle.style.display = 'none';
-
     errorContainer = document.getElementById('error-container');
-
-    // Tabs: gestione generica attiva/non attiva
-    document.querySelectorAll('.tab').forEach(tab => {
-        tab.addEventListener('click', function () {
-            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-            document.querySelectorAll('.tab-content').forEach(tc => tc.classList.remove('active'));
-            this.classList.add('active');
-            document.getElementById(this.dataset.tab).classList.add('active');
-        });
-    });
-
-    // Helper: carica eventi FSM e renderizza con annotazioni
-    async function loadHistoricalTab(charts, start, aggr_window, maxPoints, showMin, showSec) {
-        const [temp, ec, ph, level, fsmEvents] = await Promise.all([
-            listSamples("temp_c", start, aggr_window),
-            listSamples("ec_ms", start, aggr_window),
-            listSamples("ph_value", start, aggr_window),
-            listSamples("float_ok", start, aggr_window),
-            loadFsmEvents(start, aggr_window),
-        ]);
-        const annotations = buildAnnotations(fsmEvents, showMin, showSec);
-        renderChartData(charts.temp, temp, maxPoints, showMin, showSec);
-        renderChartData(charts.ec, ec, maxPoints, showMin, showSec);
-        renderChartData(charts.ph, ph, maxPoints, showMin, showSec);
-        renderChartData(charts.level, level, maxPoints, showMin, showSec);
-        applyAnnotations([charts.temp, charts.ec, charts.ph], annotations);
-        updateKPIs(charts.suffix, temp, ec, ph, level);
-    }
-
-    // Storico 1h
-    const tab1h = document.querySelector('.tab[data-tab="historical-1h"]');
-    if (tab1h) {
-        tab1h.addEventListener('click', () => loadHistoricalTab(
-            { temp: temp1h, ec: ec1h, ph: ph1h, level: level1h, suffix: '1h' },
-            '-1h', '5m', 12, true, true
-        ));
-    }
-
-    // Storico 1d
-    const tab1d = document.querySelector('.tab[data-tab="historical-1d"]');
-    if (tab1d) {
-        tab1d.addEventListener('click', () => loadHistoricalTab(
-            { temp: temp1d, ec: ec1d, ph: ph1d, level: level1d, suffix: '1d' },
-            '-1d', '1h', 24, true, false
-        ));
-    }
-
-    // Storico 7d
-    const tab7d = document.querySelector('.tab[data-tab="historical-7d"]');
-    if (tab7d) {
-        tab7d.addEventListener('click', () => loadHistoricalTab(
-            { temp: temp7d, ec: ec7d, ph: ph7d, level: level7d, suffix: '7d' },
-            '-7d', '1h', 200, false, false
-        ));
-    }
-
-    // Storico 14d
-    const tab14d = document.querySelector('.tab[data-tab="historical-14d"]');
-    if (tab14d) {
-        tab14d.addEventListener('click', () => loadHistoricalTab(
-            { temp: temp14d, ec: ec14d, ph: ph14d, level: level14d, suffix: '14d' },
-            '-14d', '2h', 200, false, false
-        ));
-    }
-
-    // Storico 1m (~30d)
-    const tab1m = document.querySelector('.tab[data-tab="historical-1m"]');
-    if (tab1m) {
-        tab1m.addEventListener('click', () => loadHistoricalTab(
-            { temp: temp1m, ec: ec1m, ph: ph1m, level: level1m, suffix: '1m' },
-            '-30d', '6h', 200, false, false
-        ));
-    }
-
-    // Storico 1y
-    const tab1y = document.querySelector('.tab[data-tab="historical-1y"]');
-    if (tab1y) {
-        tab1y.addEventListener('click', () => loadHistoricalTab(
-            { temp: temp1y, ec: ec1y, ph: ph1y, level: level1y, suffix: '1y' },
-            '-365d', '1d', 400, false, false
-        ));
-    }
-
-    // Tab Analisi Dosaggi
-    const tabDosing = document.querySelector('.tab[data-tab="dosing-analysis"]');
-    if (tabDosing) {
-        tabDosing.addEventListener('click', () => loadDosingAnalysis());
-    }
-
-    // ── Bottone fullscreen su ogni chart container ────────────────────────────
-    document.querySelectorAll('.container').forEach(container => {
-        const header = container.querySelector('.graph-header');
-        if (!header) return;
-
-        const btn = document.createElement('button');
-        btn.className = 'btn-fullscreen';
-        btn.title = 'Visualizza a tutto schermo';
-        btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-            stroke-linecap="round" stroke-linejoin="round" width="14" height="14">
-            <polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/>
-            <line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>
-        </svg>`;
-
-        btn.addEventListener('click', () => {
-            if (!document.fullscreenElement) {
-                container.requestFullscreen().catch(err => {
-                    console.warn('Fullscreen non disponibile:', err);
-                });
-            } else {
-                document.exitFullscreen();
-            }
-        });
-
-        // Aggiorna icona al cambio stato fullscreen
-        document.addEventListener('fullscreenchange', () => {
-            const isFs = document.fullscreenElement === container;
-            btn.innerHTML = isFs
-                ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                    stroke-linecap="round" stroke-linejoin="round" width="14" height="14">
-                    <polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/>
-                    <line x1="10" y1="14" x2="3" y2="21"/><line x1="21" y1="3" x2="14" y2="10"/>
-                  </svg>`
-                : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                    stroke-linecap="round" stroke-linejoin="round" width="14" height="14">
-                    <polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/>
-                    <line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>
-                  </svg>`;
-        }, { capture: false });
-
-        // Inserisci a fine header (prima del popover)
-        const popover = header.querySelector('.popover');
-        if (popover) header.insertBefore(btn, popover);
-        else header.appendChild(btn);
-    });
-
+    initTheme();
+    buildKPICards();
+    buildTabs();
+    buildTabContents();
     initSocketIO();
+    initSystemInfo();
 });
 
+/* ---------- KPI CARDS ---------- */
+function buildKPICards() {
+    const row = document.getElementById('kpi-row');
+    KPI_SENSORS.forEach(key => {
+        const s = SENSORS[key];
+        const card = document.createElement('div');
+        card.className = 'kpi-card';
+        card.id = `kpi-${key}`;
+        card.innerHTML = `
+            <div class="kpi-label">${s.label}</div>
+            <div class="kpi-value-row">
+                <span class="kpi-value" id="kpi-${key}-value">--</span>
+                <span class="kpi-unit">${s.unit}</span>
+                <span class="kpi-trend" id="kpi-${key}-trend"></span>
+            </div>
+            <div class="kpi-range" id="kpi-${key}-range">min -- / max --</div>
+        `;
+        card.style.borderTopColor = s.color;
+        row.appendChild(card);
+    });
+}
+
+/* ---------- TAB BUTTONS ---------- */
+function buildTabs() {
+    const bar = document.getElementById('tabs-bar');
+    TABS.forEach(tab => {
+        const btn = document.createElement('button');
+        btn.dataset.tab = tab.id;
+        if (tab.isLive) {
+            btn.className = 'tab-with-circle tab active';
+            btn.innerHTML = `<span id="live-circle"></span>${tab.label}`;
+        } else {
+            btn.className = 'tab';
+            btn.textContent = tab.label;
+        }
+        btn.addEventListener('click', () => switchTab(tab));
+        bar.appendChild(btn);
+    });
+}
+
+function switchTab(tab) {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(tc => tc.classList.remove('active'));
+    document.querySelector(`.tab[data-tab="${tab.id}"]`).classList.add('active');
+    document.getElementById(`tab-${tab.id}`).classList.add('active');
+
+    if (!tab.isLive && !tab.isDosaggi && !tab.isSettings) {
+        loadHistoricalTab(tab);
+    } else if (tab.isDosaggi) {
+        loadDosaggiTab();
+    } else if (tab.isSettings) {
+        loadSystemStatus();
+    }
+}
+
+/* ---------- TAB CONTENT PANELS ---------- */
+function buildTabContents() {
+    const root = document.getElementById('charts-root');
+
+    TABS.forEach(tab => {
+        const div = document.createElement('div');
+        div.id = `tab-${tab.id}`;
+        div.className = 'tab-content' + (tab.isLive ? ' active' : '');
+
+        if (tab.isDosaggi) {
+            div.innerHTML = buildDosaggiHTML();
+        } else if (tab.isSettings) {
+            div.innerHTML = buildSettingsHTML();
+        } else {
+            div.innerHTML = buildChartTabHTML(tab);
+            initChartsForTab(tab, div);
+        }
+        root.appendChild(div);
+    });
+}
+
+function buildChartTabHTML(tab) {
+    const topCharts = TOP_ROW_SENSORS.map(k => chartContainerHTML(k, tab.id)).join('');
+    const bottomCharts = BOTTOM_ROW_SENSORS.map(k => chartContainerHTML(k, tab.id, true)).join('');
+
+    const exportBtn = (!tab.isLive)
+        ? `<div class="export-row"><button class="btn btn-export" onclick="exportCSV('${tab.id}')">CSV Export</button></div>`
+        : '';
+
+    return `${exportBtn}<div class="top-row">${topCharts}</div><div class="derived-row">${bottomCharts}</div>`;
+}
+
+function chartContainerHTML(sensorKey, tabId, isDerived) {
+    const s = SENSORS[sensorKey];
+    const cid = `${sensorKey}-${tabId}-chart`;
+    return `
+        <div class="container${isDerived ? ' derived-container' : ''}">
+            <div class="graph-header">
+                <span>${s.label}</span>
+            </div>
+            <canvas id="${cid}"></canvas>
+            <div id="${cid}-nodata" class="nodata-container">
+                <img src="./img/nodata.svg" class="nodata-img">
+                <span class="no-data">No data</span>
+            </div>
+        </div>`;
+}
+
+function initChartsForTab(tab, parentEl) {
+    charts[tab.id] = {};
+    const allKeys = [...TOP_ROW_SENSORS, ...BOTTOM_ROW_SENSORS];
+    allKeys.forEach(key => {
+        const s = SENSORS[key];
+        const canvas = parentEl.querySelector(`#${key}-${tab.id}-chart`);
+        charts[tab.id][key] = {
+            canvas: canvas,
+            chart: null,
+            data: newChartData(s.color, s.fill),
+            unit: s.unit,
+            sensorKey: key,
+        };
+    });
+}
+
+/* ================================================================
+ *  DOSAGGI TAB
+ * ================================================================ */
+
+function buildDosaggiHTML() {
+    return `
+        <div class="dosaggi-kpi-row">
+            <div class="kpi-card kpi-card-sm"><div class="kpi-label">Dosaggi (7gg)</div><div class="kpi-value" id="dos-count">--</div></div>
+            <div class="kpi-card kpi-card-sm"><div class="kpi-label">Durata media</div><div class="kpi-value" id="dos-avg-dur">--</div></div>
+            <div class="kpi-card kpi-card-sm"><div class="kpi-label">Intervallo medio</div><div class="kpi-value" id="dos-avg-int">--</div></div>
+            <div class="kpi-card kpi-card-sm"><div class="kpi-label">Efficacia</div><div class="kpi-value" id="dos-eff">--%</div></div>
+        </div>
+
+        <div class="container dosaggi-table-container">
+            <div class="graph-header"><span>Cicli dosaggio (7 giorni)</span></div>
+            <div class="table-scroll">
+                <table class="data-table">
+                    <thead><tr>
+                        <th>Timestamp</th><th>pH prima</th><th>pH dopo</th><th>\u0394 pH</th>
+                        <th>EC prima</th><th>EC dopo</th><th>\u0394 EC</th><th>Risultato</th>
+                    </tr></thead>
+                    <tbody id="dosing-tbody"></tbody>
+                </table>
+            </div>
+            <div class="pagination" id="dosing-pagination"></div>
+        </div>
+
+        <div class="container dosaggi-table-container">
+            <div class="graph-header"><span>Storico FSM (7 giorni)</span></div>
+            <div class="table-scroll">
+                <table class="data-table">
+                    <thead><tr>
+                        <th>Timestamp</th><th>Stato</th><th>Durata (min)</th>
+                    </tr></thead>
+                    <tbody id="fsm-tbody"></tbody>
+                </table>
+            </div>
+            <div class="pagination" id="fsm-pagination"></div>
+        </div>`;
+}
+
+let dosingData = [];
+let fsmData = [];
+let dosingPage = 0;
+let fsmPage = 0;
+const PAGE_SIZE = 10;
+
+async function loadDosaggiTab() {
+    const [phBefore, phAfter, ecBefore, ecAfter, fsmRaw] = await Promise.all([
+        listSamples('dosing_ph_before', '-7d', '1m'),
+        listSamples('dosing_ph_after',  '-7d', '1m'),
+        listSamples('dosing_ec_before', '-7d', '1m'),
+        listSamples('dosing_ec_after',  '-7d', '1m'),
+        listSamples('fsm_state',        '-7d', '1m'),
+    ]);
+
+    // Build dosing cycles
+    dosingData = buildDosingCycles(phBefore, phAfter, ecBefore, ecAfter);
+    dosingPage = 0;
+    renderDosingTable();
+
+    // Build FSM events
+    fsmData = buildFSMEvents(fsmRaw);
+    fsmPage = 0;
+    renderFSMTable();
+
+    // KPI summary
+    updateDosaggiKPI();
+}
+
+function buildDosingCycles(phB, phA, ecB, ecA) {
+    if (!phB || !phA) return [];
+    const cycles = [];
+    const len = Math.min(phB.length, phA.length);
+    for (let i = 0; i < len; i++) {
+        const phBefore = phB[i].value;
+        const phAfter  = phA[i].value;
+        const ecBefore = (ecB && ecB[i]) ? ecB[i].value : null;
+        const ecAfter  = (ecA && ecA[i]) ? ecA[i].value : null;
+        if (phBefore === 0 && phAfter === 0) continue; // skip empty
+        cycles.push({
+            ts: phB[i].ts,
+            phBefore, phAfter,
+            ecBefore, ecAfter,
+            deltaPh: phAfter - phBefore,
+            deltaEc: (ecBefore !== null && ecAfter !== null) ? ecAfter - ecBefore : null,
+        });
+    }
+    return cycles.reverse(); // newest first
+}
+
+function getDosingResult(cycle) {
+    const ph = cycle.phAfter;
+    if (ph >= 5.5 && ph <= 6.5) return { text: 'Target', cls: 'badge-ok' };
+    if (ph > 6.5) return { text: 'Eccesso', cls: 'badge-warn' };
+    return { text: 'Difetto', cls: 'badge-err' };
+}
+
+function renderDosingTable() {
+    const tbody = document.getElementById('dosing-tbody');
+    const page = dosingData.slice(dosingPage * PAGE_SIZE, (dosingPage + 1) * PAGE_SIZE);
+    tbody.innerHTML = page.map(c => {
+        const r = getDosingResult(c);
+        return `<tr>
+            <td>${fmtTs(c.ts)}</td>
+            <td>${c.phBefore.toFixed(2)}</td><td>${c.phAfter.toFixed(2)}</td>
+            <td class="${c.deltaPh < 0 ? 'delta-neg' : 'delta-pos'}">${c.deltaPh > 0 ? '+' : ''}${c.deltaPh.toFixed(2)}</td>
+            <td>${c.ecBefore !== null ? c.ecBefore.toFixed(2) : '--'}</td>
+            <td>${c.ecAfter !== null ? c.ecAfter.toFixed(2) : '--'}</td>
+            <td>${c.deltaEc !== null ? ((c.deltaEc > 0 ? '+' : '') + c.deltaEc.toFixed(2)) : '--'}</td>
+            <td><span class="badge ${r.cls}">${r.text}</span></td>
+        </tr>`;
+    }).join('');
+    renderPagination('dosing-pagination', dosingData.length, dosingPage, p => { dosingPage = p; renderDosingTable(); });
+}
+
+function buildFSMEvents(raw) {
+    if (!raw || raw.length < 2) return [];
+    const events = [];
+    for (let i = 0; i < raw.length - 1; i++) {
+        const stateVal = Math.round(raw[i].value);
+        const stateInfo = FSM_STATES[stateVal] || { name: `STATE_${stateVal}`, color: '#888' };
+        const durMin = ((raw[i + 1].ts - raw[i].ts) / 60000).toFixed(1);
+        if (stateVal === 0 && durMin > 60) continue; // skip long IDLE
+        events.push({ ts: raw[i].ts, state: stateInfo, duration: durMin });
+    }
+    return events.reverse();
+}
+
+function renderFSMTable() {
+    const tbody = document.getElementById('fsm-tbody');
+    const page = fsmData.slice(fsmPage * PAGE_SIZE, (fsmPage + 1) * PAGE_SIZE);
+    tbody.innerHTML = page.map(e => `<tr>
+        <td>${fmtTs(e.ts)}</td>
+        <td><span class="state-badge" style="background:${e.state.color}">${e.state.name}</span></td>
+        <td>${e.duration}</td>
+    </tr>`).join('');
+    renderPagination('fsm-pagination', fsmData.length, fsmPage, p => { fsmPage = p; renderFSMTable(); });
+}
+
+function updateDosaggiKPI() {
+    const el = (id) => document.getElementById(id);
+    el('dos-count').textContent = dosingData.length;
+
+    if (dosingData.length > 0) {
+        const onTarget = dosingData.filter(c => c.phAfter >= 5.5 && c.phAfter <= 6.5).length;
+        el('dos-eff').textContent = Math.round(onTarget / dosingData.length * 100) + '%';
+    }
+
+    if (dosingData.length >= 2) {
+        const intervals = [];
+        for (let i = 0; i < dosingData.length - 1; i++) {
+            intervals.push(Math.abs(dosingData[i].ts - dosingData[i + 1].ts) / 60000);
+        }
+        el('dos-avg-int').textContent = Math.round(intervals.reduce((a, b) => a + b, 0) / intervals.length) + ' min';
+    }
+
+    // avg duration not available from before/after only; show "--"
+    el('dos-avg-dur').textContent = '--';
+}
+
+function renderPagination(containerId, totalItems, currentPage, onPageChange) {
+    const container = document.getElementById(containerId);
+    const totalPages = Math.ceil(totalItems / PAGE_SIZE);
+    if (totalPages <= 1) { container.innerHTML = ''; return; }
+    let html = '';
+    if (currentPage > 0) html += `<button class="btn btn-page" data-p="${currentPage - 1}">&laquo;</button>`;
+    for (let i = 0; i < totalPages; i++) {
+        html += `<button class="btn btn-page${i === currentPage ? ' active' : ''}" data-p="${i}">${i + 1}</button>`;
+    }
+    if (currentPage < totalPages - 1) html += `<button class="btn btn-page" data-p="${currentPage + 1}">&raquo;</button>`;
+    container.innerHTML = html;
+    container.querySelectorAll('[data-p]').forEach(btn => {
+        btn.addEventListener('click', () => onPageChange(parseInt(btn.dataset.p)));
+    });
+}
+
+/* ================================================================
+ *  HISTORICAL DATA LOADING (parallel fetch + spinner)
+ * ================================================================ */
+
+async function loadHistoricalTab(tabCfg) {
+    const tabEl = document.getElementById(`tab-${tabCfg.id}`);
+    showSpinners(tabEl);
+
+    try {
+        const sensorKeys = [...TOP_ROW_SENSORS, ...BOTTOM_ROW_SENSORS];
+        const results = await Promise.all(
+            sensorKeys.map(k => listSamples(SENSORS[k].resource, tabCfg.start, tabCfg.aggr))
+        );
+        sensorKeys.forEach((key, i) => {
+            renderChartData(charts[tabCfg.id][key], results[i], tabCfg.maxPts, tabCfg.showMin, tabCfg.showSec);
+        });
+    } finally {
+        hideSpinners(tabEl);
+    }
+}
+
+function showSpinners(tabEl) {
+    tabEl.querySelectorAll('.container').forEach(c => {
+        if (c.querySelector('.chart-spinner')) return;
+        const sp = document.createElement('div');
+        sp.className = 'chart-spinner';
+        c.appendChild(sp);
+    });
+}
+
+function hideSpinners(tabEl) {
+    tabEl.querySelectorAll('.chart-spinner').forEach(s => s.remove());
+}
+
+/* ================================================================
+ *  CSV EXPORT
+ * ================================================================ */
+
+async function exportCSV(tabId) {
+    const tabCfg = TABS.find(t => t.id === tabId);
+    if (!tabCfg || tabCfg.isLive || tabCfg.isDosaggi) return;
+
+    const sensorKeys = [...TOP_ROW_SENSORS, ...BOTTOM_ROW_SENSORS];
+    const results = await Promise.all(
+        sensorKeys.map(k => listSamples(SENSORS[k].resource, tabCfg.start, tabCfg.aggr))
+    );
+
+    const tsMap = new Map();
+    sensorKeys.forEach((key, i) => {
+        if (!results[i]) return;
+        for (const row of results[i]) {
+            if (!tsMap.has(row.ts)) tsMap.set(row.ts, {});
+            tsMap.get(row.ts)[key] = row.value;
+        }
+    });
+
+    const sorted = [...tsMap.entries()].sort((a, b) => a[0] - b[0]);
+    const header = 'timestamp,temp_c,ec_ms,ph,ph_mv,level\n';
+    const rows = sorted.map(([ts, vals]) => {
+        const d = new Date(ts).toISOString();
+        return `${d},${vals.temp ?? ''},${vals.ec ?? ''},${vals.ph ?? ''},${vals.phmv ?? ''},${vals.level ?? ''}`;
+    }).join('\n');
+
+    const blob = new Blob([header + rows], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const today = new Date().toISOString().slice(0, 10);
+    a.href = url;
+    a.download = `idroponica_${tabId}_${today}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+/* ================================================================
+ *  SOCKET.IO
+ * ================================================================ */
 
 function initSocketIO() {
     socket.on('connect', () => {
-        if (errorContainer) {
-            errorContainer.style.display = 'none';
-            errorContainer.textContent = '';
-        }
+        if (errorContainer) { errorContainer.style.display = 'none'; errorContainer.textContent = ''; }
     });
 
     socket.on('disconnect', () => {
         if (errorContainer) {
-            errorContainer.textContent = 'Connessione persa. Controlla il collegamento con la scheda.';
+            errorContainer.textContent = 'Connessione persa. Verifica la connessione.';
             errorContainer.style.display = 'block';
         }
     });
 
-    // Canali live + aggiornamento KPI
-    socket.on('temp_c', (msg) => { renderChartData(tempLive, [msg]); updateLiveKPIs(); });
-    socket.on('ec_ms', (msg) => { renderChartData(ecLive, [msg]); updateLiveKPIs(); });
-    socket.on('ph_value', (msg) => { renderChartData(phLive, [msg]); updateLiveKPIs(); });
-    socket.on('float_ok', (msg) => { renderChartData(levelLive, [msg]); updateLiveKPIs(); });
+    // Live chart data
+    for (const [key, sensor] of Object.entries(SENSORS)) {
+        socket.on(sensor.wsEvent, (msg) => {
+            if (charts['live'] && charts['live'][key]) {
+                renderChartData(charts['live'][key], [msg]);
+            }
+            updateKPI(key, msg);
+        });
+    }
 
-    // Clock update
-    socket.on('server_time', (message) => {
-        const clockEl = document.getElementById('server-clock');
-        if (clockEl && message.time) {
-            clockEl.textContent = message.time;
-        }
-    });
-
-    // Status updates
-    socket.on('state_changed', (message) => {
+    // FSM state
+    socket.on('state_changed', (msg) => {
         const statusEl = document.getElementById('system-status');
-        if (statusEl && message.state) {
-            statusEl.textContent = message.state;
-            statusEl.className = 'status-value ' + message.state;
+        if (statusEl && msg.state) {
+            statusEl.textContent = msg.state;
+            statusEl.className = 'status-value ' + msg.state;
         }
+    });
+
+    // Server clock
+    socket.on('server_time', (msg) => {
+        const el = document.getElementById('server-clock');
+        if (el && msg.time) el.textContent = msg.time;
+    });
+
+    // Pump status
+    socket.on('pump_status', (msg) => {
+        updatePumpStatus(msg);
     });
 }
 
-// ── KPI helpers ──
-
-/** Compute average from an array of {ts, value} messages */
-function computeAvg(messages) {
-    if (!messages || messages.length === 0) return null;
-    const values = messages.filter(m => m.value !== undefined && m.value !== null).map(m => m.value);
-    if (values.length === 0) return null;
-    const sum = values.reduce((a, b) => a + b, 0);
-    return sum / values.length;
+/* Fetch system status on first load for pump bar + next irrigation */
+function initSystemInfo() {
+    loadSystemStatus();
+    // Refresh system info every 60s
+    setInterval(() => {
+        const settingsTab = document.getElementById('tab-settings');
+        if (settingsTab && settingsTab.classList.contains('active')) {
+            loadSystemStatus();
+        }
+    }, 60000);
 }
 
-/** Set a single KPI element's text. Shows "--" if value is null. */
-function setKPI(elementId, value, decimals = 2) {
-    const el = document.getElementById(elementId);
-    if (!el) return;
-    // Preserve existing unit span
-    const unitSpan = el.querySelector('.kpi-unit');
-    const unitHTML = unitSpan ? unitSpan.outerHTML : '';
-    if (value === null || value === undefined) {
-        el.innerHTML = '--' + unitHTML;
+/* ================================================================
+ *  KPI UPDATES
+ * ================================================================ */
+
+function updateKPI(key, msg) {
+    if (!KPI_SENSORS.includes(key)) return;
+    const state = kpiState[key];
+    state.prev = state.current;
+    state.current = msg.value;
+    state.history.push({ value: msg.value, ts: msg.ts });
+
+    // Keep only last 60 min
+    const cutoff = Date.now() - 3600000;
+    state.history = state.history.filter(h => h.ts > cutoff);
+
+    const valEl = document.getElementById(`kpi-${key}-value`);
+    const trendEl = document.getElementById(`kpi-${key}-trend`);
+    const rangeEl = document.getElementById(`kpi-${key}-range`);
+
+    if (!valEl) return;
+
+    const card = document.getElementById(`kpi-${key}`);
+
+    if (key === 'level') {
+        valEl.textContent = state.current >= 1 ? 'OK' : 'LOW';
+        valEl.className = 'kpi-value ' + (state.current >= 1 ? 'kpi-ok' : 'kpi-low');
+        if (trendEl) trendEl.textContent = '';
+        if (rangeEl) rangeEl.textContent = '';
+        // Alert for low water
+        if (card) card.classList.toggle('kpi-alert', state.current < 1);
     } else {
-        el.innerHTML = value.toFixed(decimals) + unitHTML;
+        valEl.textContent = state.current.toFixed(2);
+        if (trendEl && state.prev !== null) {
+            const diff = state.current - state.prev;
+            trendEl.textContent = diff > 0.01 ? '\u25b2' : (diff < -0.01 ? '\u25bc' : '\u25cf');
+            trendEl.className = 'kpi-trend ' + (diff > 0.01 ? 'trend-up' : (diff < -0.01 ? 'trend-down' : 'trend-stable'));
+        }
+        if (rangeEl && state.history.length > 0) {
+            const vals = state.history.map(h => h.value);
+            rangeEl.textContent = `min ${Math.min(...vals).toFixed(1)} / max ${Math.max(...vals).toFixed(1)}`;
+        }
+        // Alert if out of range
+        const alert = KPI_ALERTS[key];
+        if (card && alert) {
+            const outOfRange = state.current < alert.min || state.current > alert.max;
+            card.classList.toggle('kpi-alert', outOfRange);
+        }
     }
 }
 
-/** Update KPI cards for a given tab suffix (e.g. '1h', '7d', 'live') */
-function updateKPIs(tabSuffix, tempData, ecData, phData, levelData) {
-    setKPI(`kpi-temp-${tabSuffix}`, computeAvg(tempData));
-    setKPI(`kpi-ec-${tabSuffix}`, computeAvg(ecData));
-    setKPI(`kpi-ph-${tabSuffix}`, computeAvg(phData));
-    setKPI(`kpi-level-${tabSuffix}`, computeAvg(levelData));
-}
-
-/** Update live KPI cards from the chart data arrays (running averages) */
-function updateLiveKPIs() {
-    setKPI('kpi-temp-live', chartDataAvg(tempLive));
-    setKPI('kpi-ec-live', chartDataAvg(ecLive));
-    setKPI('kpi-ph-live', chartDataAvg(phLive));
-    setKPI('kpi-level-live', chartDataAvg(levelLive));
-}
-
-/** Compute average from a chart object's dataset */
-function chartDataAvg(obj) {
-    const values = obj.data.datasets[0].data;
-    if (!values || values.length === 0) return null;
-    const sum = values.reduce((a, b) => a + b, 0);
-    return sum / values.length;
-}
-
-// ── Commands ──
-
-async function sendCommand(cmd) {
-    try {
-        const response = await fetch(`http://${window.location.host}/api/command/${cmd}`);
-        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-        const data = await response.json();
-        console.log("Command result:", data);
-    } catch (error) {
-        console.error("Command failed:", error);
-        alert("Comando fallito: " + error.message);
-    }
-}
-
-// ── Data fetching ──
+/* ================================================================
+ *  CHART RENDERING
+ * ================================================================ */
 
 async function listSamples(resource, start, aggr_window) {
     try {
         const response = await fetch(`http://${window.location.host}/get_samples/${resource}/${start}/${aggr_window}`);
-        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const data = await response.json();
-        if (data.error) {
-            console.log(`Failed to get samples for ${resource}: ${data.error}`);
-            return;
-        }
+        if (data.error) { console.log(`Samples error ${resource}: ${data.error}`); return null; }
         return data;
     } catch (error) {
-        console.log(`Error fetching samples for ${resource}: ${error.message}`);
+        console.log(`Fetch error ${resource}: ${error.message}`);
+        return null;
     }
 }
 
-// ── FSM Events & Annotations ──
-
-/**
- * Carica i campioni fsm_state dal server.
- * Usa aggr_func=max per rilevare le transizioni di stato anche in finestre aggregate.
- */
-async function loadFsmEvents(start, aggr_window) {
-    try {
-        const response = await fetch(`http://${window.location.host}/get_samples/fsm_state/${start}/${aggr_window}`);
-        if (!response.ok) return [];
-        const data = await response.json();
-        return Array.isArray(data) ? data : [];
-    } catch (e) {
-        console.warn('FSM events non disponibili:', e.message);
-        return [];
-    }
-}
-
-/**
- * Helper: formatta un timestamp nello stesso formato usato dalle label del grafico.
- * Deve rispecchiare esattamente la logica in renderChartData.
- */
-function formatTsLikeChart(ts, showMinutes, showSeconds) {
-    const d = new Date(ts);
-    if (showMinutes && showSeconds) {
-        return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-    } else if (showMinutes) {
-        return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    } else {
-        return d.toLocaleString([], { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-    }
-}
-
-/**
- * Converte i campioni fsm_state in annotazioni Chart.js (box verticali).
- * Stato 2 = IRRIGATING (blu), 3 = DOSING (rosso), 4 = MIXING (giallo),
- * 1 = REFILLING (ciano), 5 = RECIRCULATING (viola), 7 = DRAINING (grigio).
- * Ogni fascia mostra un'etichetta testuale con il nome dello stato.
- */
-function buildAnnotations(fsmData, showMinutes = true, showSeconds = true) {
-    if (!fsmData || fsmData.length === 0) return {};
-
-    const stateStyles = {
-        1: { bg: 'rgba(6,182,212,0.10)', border: 'rgba(6,182,212,0.45)', label: '💧 Refill', color: 'rgba(6,182,212,0.9)' },
-        2: { bg: 'rgba(59,130,246,0.12)', border: 'rgba(59,130,246,0.4)', label: '🌊 Irrigazione', color: 'rgba(59,130,246,0.9)' },
-        3: { bg: 'rgba(239,68,68,0.12)', border: 'rgba(239,68,68,0.4)', label: '⚗️ Dosaggio', color: 'rgba(239,68,68,0.9)' },
-        4: { bg: 'rgba(245,158,11,0.12)', border: 'rgba(245,158,11,0.4)', label: '🔄 Mixing', color: 'rgba(245,158,11,0.9)' },
-        5: { bg: 'rgba(168,85,247,0.10)', border: 'rgba(168,85,247,0.4)', label: '♻️ Ricircolo', color: 'rgba(168,85,247,0.9)' },
-        7: { bg: 'rgba(100,116,139,0.10)', border: 'rgba(100,116,139,0.4)', label: '⏳ Scarico', color: 'rgba(100,116,139,0.9)' },
-    };
-
-    const annotations = {};
-    let idx = 0;
-
-    // Gap minimo tra etichette: 5% del range totale → max ~20 label visibili
-    const totalRange = fsmData[fsmData.length - 1].ts - fsmData[0].ts;
-    const minLabelGapMs = totalRange * 0.05;
-    let lastLabelTs = -Infinity;
-    let labelRow = 0; // alterna tra due altezze verticali
-
-    let i = 0;
-    while (i < fsmData.length) {
-        const stateVal = Math.round(fsmData[i].value);
-        if (!stateStyles[stateVal]) { i++; continue; }
-
-        // Trova fine del blocco
-        let j = i + 1;
-        while (j < fsmData.length && Math.round(fsmData[j].value) === stateVal) j++;
-
-        const startTs = fsmData[i].ts;
-        const endTs = fsmData[j - 1].ts;
-        const s = stateStyles[stateVal];
-        const key = `evt_${idx++}`;
-
-        // Fascia colorata (sempre visibile)
-        annotations[key] = {
-            type: 'box',
-            xMin: formatTsLikeChart(startTs, showMinutes, showSeconds),
-            xMax: formatTsLikeChart(endTs, showMinutes, showSeconds),
-            backgroundColor: s.bg,
-            borderColor: s.border,
-            borderWidth: 1,
-        };
-
-        // Etichetta: solo se distante abbastanza dall'ultima stampata
-        if ((startTs - lastLabelTs) >= minLabelGapMs) {
-            const yAdjust = labelRow === 0 ? -6 : -20;
-            labelRow = 1 - labelRow;
-            annotations[`${key}_lbl`] = {
-                type: 'label',
-                xValue: formatTsLikeChart(startTs, showMinutes, showSeconds),
-                yAdjust,
-                yValue: undefined,
-                position: { x: 'start', y: 'end' },
-                content: s.label,
-                color: s.color,
-                font: { size: 10, weight: 'bold', family: "'Roboto Mono', monospace" },
-                textAlign: 'left',
-                padding: 2,
-            };
-            lastLabelTs = startTs;
-        }
-
-        i = j;
-    }
-    return annotations;
-}
-
-/**
- * Applica un set di annotazioni a uno o più grafici Chart.js già inizializzati.
- * Se il grafico non è ancora creato, salva le annotazioni nel chart object per uso futuro.
- */
-function applyAnnotations(chartObjs, annotations) {
-    if (!annotations || Object.keys(annotations).length === 0) return;
-    chartObjs.forEach(obj => {
-        if (!obj.chart) return;
-        if (!obj.chart.options.plugins) obj.chart.options.plugins = {};
-        obj.chart.options.plugins.annotation = { annotations };
-        obj.chart.update();
-    });
-}
-
-// ── Dosing Analysis ──
-
-// Mappa nomi stato FSM
-const STATE_NAMES = {
-    0: 'IDLE',
-    1: 'REFILLING',
-    2: 'IRRIGATING',
-    3: 'DOSING',
-    4: 'MIXING',
-    5: 'RECIRCULATING',
-    6: 'ERROR',
-    7: 'DRAINING',
-};
-
-const STATE_BADGE_MAP = {
-    0: '<span class="badge badge-idle">IDLE</span>',
-    1: '<span class="badge badge-refilling">💧 Refill</span>',
-    2: '<span class="badge badge-irrigating">🌊 Irrigazione</span>',
-    3: '<span class="badge badge-dosing-ev">⚗️ Dosaggio</span>',
-    4: '<span class="badge badge-mixing-ev">🔄 Mixing</span>',
-    5: '<span class="badge badge-recirculating">♻️ Ricircolo</span>',
-    6: '<span class="badge badge-error">⚠️ Errore</span>',
-    7: '<span class="badge badge-draining">⏳ Scarico</span>',
-};
-
-// ── Stato paginazione tabelle ──────────────────────────────────────────────────
-const PAGE_SIZE = 10;
-let _dosingRows = [];   // array HTML string completo (cicli dosaggio)
-let _eventRows = [];   // array HTML string completo (eventi FSM)
-let _dosingPageIdx = 0;
-let _eventPageIdx = 0;
-
-function renderDosingPage(idx) {
-    const tbody = document.getElementById('dosing-table-body');
-    const info = document.getElementById('dosing-page-info');
-    const prevBtn = document.getElementById('dosing-prev');
-    const nextBtn = document.getElementById('dosing-next');
-    if (!tbody) return;
-    const total = _dosingRows.length;
-    const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-    idx = Math.max(0, Math.min(idx, pages - 1));
-    _dosingPageIdx = idx;
-    const slice = _dosingRows.slice(idx * PAGE_SIZE, (idx + 1) * PAGE_SIZE);
-    tbody.innerHTML = slice.join('') || '<tr><td colspan="9" class="no-data">Nessun ciclo dosaggio pH/EC (ultimi 7 giorni)</td></tr>';
-    if (info) info.textContent = total > 0 ? `${idx + 1} / ${pages}  (${total} righe)` : '–';
-    if (prevBtn) prevBtn.disabled = idx === 0;
-    if (nextBtn) nextBtn.disabled = idx >= pages - 1 || total === 0;
-    // Scroll to top del body scrollabile
-    const sb = document.querySelector('#dosing-table-wrap .scroll-body');
-    if (sb) sb.scrollTop = 0;
-}
-
-function renderEventPage(idx) {
-    const tbody = document.getElementById('event-history-body');
-    const info = document.getElementById('event-page-info');
-    const prevBtn = document.getElementById('event-prev');
-    const nextBtn = document.getElementById('event-next');
-    if (!tbody) return;
-    const total = _eventRows.length;
-    const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-    idx = Math.max(0, Math.min(idx, pages - 1));
-    _eventPageIdx = idx;
-    const slice = _eventRows.slice(idx * PAGE_SIZE, (idx + 1) * PAGE_SIZE);
-    tbody.innerHTML = slice.join('') || '<tr><td colspan="4" class="no-data">Nessun evento registrato (ultimi 7 giorni)</td></tr>';
-    if (info) info.textContent = total > 0 ? `${idx + 1} / ${pages}  (${total} righe)` : '–';
-    if (prevBtn) prevBtn.disabled = idx === 0;
-    if (nextBtn) nextBtn.disabled = idx >= pages - 1 || total === 0;
-    const sb = document.querySelector('#event-table-wrap .scroll-body');
-    if (sb) sb.scrollTop = 0;
-}
-
-// Chiamate dai bottoni HTML
-function dosingPage(delta) { renderDosingPage(_dosingPageIdx + delta); }
-function eventPage(delta) { renderEventPage(_eventPageIdx + delta); }
-
-/**
- * Carica dati dosing + cronologia eventi FSM.
- */
-async function loadDosingAnalysis() {
-    const start = '-7d';
-    const aggr = '10m';
-
-    const [phBefore, phAfter, ecBefore, ecAfter, fsmData] = await Promise.all([
-        listSamples('dosing_ph_before', start, aggr),
-        listSamples('dosing_ph_after', start, aggr),
-        listSamples('dosing_ec_before', start, aggr),
-        listSamples('dosing_ec_after', start, aggr),
-        loadFsmEvents(start, '1m'),
-    ]);
-
-    // ─── 1. Cicli dosaggio ───
-    const cycles = [];
-    if (phBefore && phBefore.length > 0) {
-        phBefore.forEach((bef, idx) => {
-            const aft = phAfter && phAfter[idx] ? phAfter[idx] : null;
-            const ecB = ecBefore && ecBefore[idx] ? ecBefore[idx] : null;
-            const ecA = ecAfter && ecAfter[idx] ? ecAfter[idx] : null;
-
-            const phB = bef.value;
-            const phA = aft ? aft.value : null;
-            const ecBv = ecB ? ecB.value : null;
-            const ecAv = ecA ? ecA.value : null;
-
-            const durationMin = 5.2;
-            const deltaPh = phA !== null ? (phA - phB) : null;
-            const deltaEc = ecAv !== null && ecBv !== null ? (ecAv - ecBv) : null;
-
-            let result = 'on-target';
-            const PH_LO = 5.5, PH_HI = 6.5, EC_LO = 1.0, EC_HI = 2.0;
-            if (phA !== null) {
-                if (phA < PH_LO || (ecAv !== null && ecAv < EC_LO)) result = 'undershoot';
-                if (phA > PH_HI || (ecAv !== null && ecAv > EC_HI)) result = 'overshoot';
-            } else {
-                result = 'unknown';
-            }
-            cycles.push({ ts: bef.ts, durationMin, phB, phA, ecBv, ecAv, deltaPh, deltaEc, result });
-        });
-    }
-
-    // KPI dosaggio
-    const count = cycles.length;
-    const avgDur = count > 0 ? (cycles.reduce((s, c) => s + c.durationMin, 0) / count) : null;
-    let avgInterval = null;
-    if (count >= 2) {
-        let totalGap = 0;
-        for (let i = 1; i < cycles.length; i++) totalGap += (cycles[i].ts - cycles[i - 1].ts) / 60000;
-        avgInterval = totalGap / (cycles.length - 1);
-    }
-    const onTargetCount = cycles.filter(c => c.result === 'on-target').length;
-    const effectiveness = count > 0 ? (onTargetCount / count * 100) : null;
-
-    const fmt = (v, dec = 1) => v !== null && v !== undefined ? v.toFixed(dec) : '--';
-    const setEl = (id, txt) => { const el = document.getElementById(id); if (el) { const u = el.querySelector('.kpi-unit'); el.innerHTML = txt + (u ? u.outerHTML : ''); } };
-
-    setEl('kpi-dosing-count', count > 0 ? String(count) : '0');
-    setEl('kpi-dosing-duration', fmt(avgDur) + '<span class="kpi-unit">min</span>');
-    setEl('kpi-dosing-interval', fmt(avgInterval) + '<span class="kpi-unit">min</span>');
-    setEl('kpi-dosing-effectiveness', fmt(effectiveness, 0) + '<span class="kpi-unit">%</span>');
-
-    // Costruisci righe HTML per la tabella dosaggi
-    const badgeMap = {
-        'on-target': '<span class="badge badge-on-target">✓ Target</span>',
-        'overshoot': '<span class="badge badge-overshoot">↑ Eccesso</span>',
-        'undershoot': '<span class="badge badge-undershoot">↓ Difetto</span>',
-        'unknown': '<span class="badge">--</span>',
-    };
-    const sign = v => v === null ? '--' : (v >= 0 ? '+' : '') + v.toFixed(2);
-    _dosingRows = cycles.map(c => {
-        const ts = new Date(c.ts).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-        return `<tr>
-            <td>${ts}</td>
-            <td>${c.durationMin.toFixed(1)} min</td>
-            <td>${c.phB !== null && c.phB !== undefined ? c.phB.toFixed(2) : '--'}</td>
-            <td>${c.phA !== null && c.phA !== undefined ? c.phA.toFixed(2) : '--'}</td>
-            <td>${sign(c.deltaPh)}</td>
-            <td>${c.ecBv !== null && c.ecBv !== undefined ? c.ecBv.toFixed(2) : '--'}</td>
-            <td>${c.ecAv !== null && c.ecAv !== undefined ? c.ecAv.toFixed(2) : '--'}</td>
-            <td>${sign(c.deltaEc)}</td>
-            <td>${badgeMap[c.result] || '--'}</td>
-        </tr>`;
-    });
-    _dosingPageIdx = 0;
-    renderDosingPage(0);
-
-    // ─── 2. Cronologia eventi FSM ───
-    const evtBody = document.getElementById('event-history-body');
-    if (!evtBody) return;
-
-    const events = [];
-    if (fsmData && fsmData.length > 0) {
-        let i = 0;
-        while (i < fsmData.length) {
-            const stateVal = Math.round(fsmData[i].value);
-            if (stateVal === 0) { i++; continue; }
-            let j = i + 1;
-            while (j < fsmData.length && Math.round(fsmData[j].value) === stateVal) j++;
-            const startTs = fsmData[i].ts;
-            const endTs = fsmData[j - 1].ts;
-            const durMin = Math.max(1, Math.round((endTs - startTs) / 60000));
-            events.push({ stateVal, startTs, endTs, durMin });
-            i = j;
-        }
-    }
-
-    const irrigCount = events.filter(e => e.stateVal === 2).length;
-    const dosingEvCount = events.filter(e => e.stateVal === 3).length;
-    const mixingCount = events.filter(e => e.stateVal === 4).length;
-    const totalEvents = events.length;
-    setEl('kpi-event-total', totalEvents > 0 ? String(totalEvents) : '0');
-    setEl('kpi-event-irrig', String(irrigCount));
-    setEl('kpi-event-dosing', String(dosingEvCount));
-    setEl('kpi-event-mixing', String(mixingCount));
-
-    // Costruisci righe HTML per la tabella eventi (più recenti prima)
-    _eventRows = events.reverse().map(e => {
-        const ts = new Date(e.startTs).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-        const badge = STATE_BADGE_MAP[e.stateVal] || `<span class="badge">${STATE_NAMES[e.stateVal] || e.stateVal}</span>`;
-        return `<tr>
-            <td>${ts}</td>
-            <td>${badge}</td>
-            <td>${e.durMin} min</td>
-            <td>${new Date(e.endTs).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })}</td>
-        </tr>`;
-    });
-    _eventPageIdx = 0;
-    renderEventPage(0);
-}
-
-// ── Chart rendering ──
-
-
-function renderChartData(obj, messages, maxPoints = 20, showMinutes = true, showSeconds = true) {
+function renderChartData(obj, messages, maxPoints, showMinutes, showSeconds) {
+    if (!obj || !obj.canvas) return;
+    maxPoints = maxPoints || 20;
     if (!messages || messages.length === 0) return;
 
-    const noDataDiv = document.getElementById((obj.canvas && obj.canvas.id) + '-nodata');
+    const noDataDiv = document.getElementById(obj.canvas.id + '-nodata');
     const liveCircle = document.getElementById('live-circle');
-    const isLiveChart = obj.canvas && obj.canvas.id && obj.canvas.id.endsWith('-live-chart');
+    const isLive = obj.canvas.id.endsWith('-live-chart');
 
-    // Per gli storici resetto sempre i dati
-    if (!isLiveChart) {
+    // Reset data for historical tabs
+    if (!isLive) {
         obj.data.labels = [];
         obj.data.datasets[0].data = [];
     }
@@ -711,137 +601,307 @@ function renderChartData(obj, messages, maxPoints = 20, showMinutes = true, show
     for (const message of messages) {
         if (message.ts === undefined) continue;
 
-        let date = new Date(message.ts);
+        let dateStr;
+        const date = new Date(message.ts);
         if (showMinutes && showSeconds) {
-            date = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            dateStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
         } else if (showMinutes) {
-            date = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            dateStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         } else {
-            date = date.toLocaleString([], { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+            dateStr = date.toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit' });
         }
 
-        obj.data.labels.push(date);
+        obj.data.labels.push(dateStr);
         obj.data.datasets[0].data.push(message.value);
 
         if (obj.data.labels.length > maxPoints) {
             obj.data.labels.shift();
             obj.data.datasets[0].data.shift();
         }
+    }
 
-        if (obj.data.labels.length === 0 || obj.data.datasets[0].data.length === 0) {
-            if (obj.canvas) obj.canvas.style.display = 'none';
-            if (noDataDiv) noDataDiv.style.display = 'flex';
+    const hasData = obj.data.labels.length > 0;
 
-            if (isLiveChart && liveCircle) {
-                liveCircle.style.display = 'none';
+    if (!hasData) {
+        if (obj.canvas) obj.canvas.style.display = 'none';
+        if (noDataDiv) noDataDiv.style.display = 'flex';
+        if (isLive && liveCircle) { liveCircle.style.display = 'none'; liveCircle.classList.remove('flash'); }
+        if (obj.chart) { obj.chart.destroy(); obj.chart = null; }
+    } else {
+        if (obj.canvas) obj.canvas.style.display = 'block';
+        if (noDataDiv) noDataDiv.style.display = 'none';
+
+        if (isLive && liveCircle) {
+            liveCircle.style.display = 'flex';
+            liveCircle.classList.add('flash');
+            if (liveCircleTimeout) clearTimeout(liveCircleTimeout);
+            liveCircleTimeout = setTimeout(() => {
                 liveCircle.classList.remove('flash');
-                if (liveCircleTimeout) {
-                    clearTimeout(liveCircleTimeout);
-                    liveCircleTimeout = null;
-                }
-            }
+                liveCircle.style.display = 'none';
+            }, noDataTimeout);
+        }
 
-            if (obj.chart) {
-                obj.chart.destroy();
-                obj.chart = null;
-            }
+        if (!obj.chart) {
+            obj.chart = newChart(obj.canvas.getContext('2d'), obj, obj.sensorKey);
         } else {
-            if (obj.canvas) obj.canvas.style.display = 'block';
-            if (noDataDiv) noDataDiv.style.display = 'none';
+            obj.chart.update();
+        }
+    }
+}
 
-            if (isLiveChart && liveCircle) {
-                liveCircle.style.display = 'flex';
-                liveCircle.classList.add('flash');
+function newChart(ctx, obj, sensorKey) {
+    const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+    const gridColor = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.08)';
+    const tickColor = isDark ? '#8899a6' : '#666';
 
-                if (liveCircleTimeout) clearTimeout(liveCircleTimeout);
-                liveCircleTimeout = setTimeout(() => {
-                    liveCircle.classList.remove('flash');
-                    liveCircle.style.display = 'none';
-                }, noDataTimeout);
+    const opts = {
+        responsive: true,
+        animation: false,
+        scales: {
+            y: { grid: { color: gridColor }, ticks: { color: tickColor } },
+            x: { grid: { display: false }, ticks: { maxRotation: 45, minRotation: 45, color: tickColor } },
+        },
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+            legend: { display: false },
+            tooltip: {
+                displayColors: false,
+                callbacks: {
+                    title: () => '',
+                    label: (context) => `${context.label} \u2014 ${context.parsed.y.toFixed(2)} ${obj.unit || ''}`,
+                },
+            },
+        },
+    };
+
+    // Range band annotation
+    const band = RANGE_BANDS[sensorKey];
+    if (band) {
+        opts.plugins.annotation = {
+            annotations: {
+                optimalBand: {
+                    type: 'box',
+                    yMin: band.min,
+                    yMax: band.max,
+                    backgroundColor: band.color,
+                    borderWidth: 0,
+                },
+            },
+        };
+    }
+
+    return new Chart(ctx, { type: 'line', data: obj.data, options: opts });
+}
+
+function newChartData(borderColor, backgroundColor) {
+    return {
+        labels: [],
+        datasets: [{
+            data: [],
+            borderColor: borderColor,
+            backgroundColor: backgroundColor,
+            borderWidth: 2,
+            pointRadius: 2,
+            tension: 0.3,
+            fill: true,
+        }],
+    };
+}
+
+/* ================================================================
+ *  SETTINGS / SYSTEM TAB
+ * ================================================================ */
+
+function buildSettingsHTML() {
+    return `
+        <div class="sysinfo-grid" id="sysinfo-grid">
+            <div class="sysinfo-item"><span class="sysinfo-label">Uptime</span><span class="sysinfo-value" id="sys-uptime">--</span></div>
+            <div class="sysinfo-item"><span class="sysinfo-label">Stato FSM</span><span class="sysinfo-value" id="sys-state">--</span></div>
+            <div class="sysinfo-item"><span class="sysinfo-label">In stato da</span><span class="sysinfo-value" id="sys-state-elapsed">--</span></div>
+            <div class="sysinfo-item"><span class="sysinfo-label">Prossima irrigazione</span><span class="sysinfo-value" id="sys-next-irrig">--</span></div>
+            <div class="sysinfo-item"><span class="sysinfo-label">Intervallo sensori</span><span class="sysinfo-value" id="sys-interval">--</span></div>
+            <div class="sysinfo-item"><span class="sysinfo-label">Connessione</span><span class="sysinfo-value" id="sys-conn" style="color:#2ecc71">OK</span></div>
+        </div>
+
+        <div class="settings-grid">
+            <div class="settings-section">
+                <h3>Soglie pH / EC</h3>
+                <div class="setting-row"><label>pH min</label><input type="number" step="0.1" id="cfg-ph-min" value="5.5"></div>
+                <div class="setting-row"><label>pH max</label><input type="number" step="0.1" id="cfg-ph-max" value="6.5"></div>
+                <div class="setting-row"><label>EC min (mS/cm)</label><input type="number" step="0.1" id="cfg-ec-min" value="1.0"></div>
+                <div class="setting-row"><label>EC max (mS/cm)</label><input type="number" step="0.1" id="cfg-ec-max" value="2.0"></div>
+                <div class="setting-row"><label>Intervallo sensori (s)</label><input type="number" step="1" id="cfg-interval" value="30"></div>
+                <button class="btn btn-save" onclick="saveConfig()">Salva configurazione</button>
+            </div>
+
+            <div class="settings-section">
+                <h3>Schedule irrigazione</h3>
+                <div class="schedule-hours" id="schedule-hours"></div>
+            </div>
+        </div>`;
+}
+
+async function loadSystemStatus() {
+    try {
+        const resp = await fetch(`http://${window.location.host}/api/system_status`);
+        if (!resp.ok) return;
+        const data = await resp.json();
+
+        const el = (id) => document.getElementById(id);
+
+        // Uptime
+        const hrs = Math.floor(data.uptime_sec / 3600);
+        const mins = Math.floor((data.uptime_sec % 3600) / 60);
+        if (el('sys-uptime')) el('sys-uptime').textContent = `${hrs}h ${mins}m`;
+        if (el('sys-state')) el('sys-state').textContent = data.state;
+        if (el('sys-state-elapsed')) {
+            const eSec = data.state_elapsed_sec;
+            el('sys-state-elapsed').textContent = eSec > 60 ? `${Math.floor(eSec / 60)}m ${eSec % 60}s` : `${eSec}s`;
+        }
+        if (el('sys-next-irrig')) el('sys-next-irrig').textContent = data.next_irrigation;
+        if (el('sys-interval')) el('sys-interval').textContent = `${data.sensor_interval}s`;
+
+        // Update next irrigation badge in pump bar
+        if (el('next-irrig-text')) el('next-irrig-text').textContent = data.next_irrigation;
+
+        // Thresholds
+        if (data.thresholds) {
+            if (el('cfg-ph-min')) el('cfg-ph-min').value = data.thresholds.ph_min;
+            if (el('cfg-ph-max')) el('cfg-ph-max').value = data.thresholds.ph_max;
+            if (el('cfg-ec-min')) el('cfg-ec-min').value = data.thresholds.ec_min;
+            if (el('cfg-ec-max')) el('cfg-ec-max').value = data.thresholds.ec_max;
+            // Update alert thresholds
+            KPI_ALERTS.ph.min = data.thresholds.ph_min;
+            KPI_ALERTS.ph.max = data.thresholds.ph_max;
+            KPI_ALERTS.ec.min = data.thresholds.ec_min;
+            KPI_ALERTS.ec.max = data.thresholds.ec_max;
+        }
+        if (el('cfg-interval')) el('cfg-interval').value = data.sensor_interval;
+
+        // Schedule hours visualization
+        const container = el('schedule-hours');
+        if (container && data.watering_hours) {
+            container.innerHTML = '';
+            for (let h = 0; h < 24; h++) {
+                const chip = document.createElement('div');
+                chip.className = 'hour-chip';
+                chip.textContent = h;
+                if (data.watering_hours.includes(h)) chip.classList.add('hour-active');
+                container.appendChild(chip);
             }
+        }
+    } catch (e) {
+        console.log('System status fetch error:', e.message);
+    }
+}
 
-            if (!obj.chart) {
-                obj.chart = newChart(obj.canvas.getContext('2d'), obj);
+async function saveConfig() {
+    const el = (id) => document.getElementById(id);
+    const params = new URLSearchParams({
+        ph_min: el('cfg-ph-min')?.value || '',
+        ph_max: el('cfg-ph-max')?.value || '',
+        ec_min: el('cfg-ec-min')?.value || '',
+        ec_max: el('cfg-ec-max')?.value || '',
+        sensor_interval: el('cfg-interval')?.value || '',
+    });
+    try {
+        const resp = await fetch(`http://${window.location.host}/api/config/update?${params}`);
+        const data = await resp.json();
+        if (data.status === 'ok') {
+            alert('Configurazione salvata!');
+            loadSystemStatus();
+        } else {
+            alert('Errore: ' + (data.message || 'sconosciuto'));
+        }
+    } catch (e) {
+        alert('Errore di connessione: ' + e.message);
+    }
+}
+
+/* ================================================================
+ *  PUMP STATUS
+ * ================================================================ */
+
+function updatePumpStatus(status) {
+    PUMP_NAMES.forEach(name => {
+        const el = document.getElementById(`pump-${name}`);
+        if (el) {
+            if (status[name]) {
+                el.classList.add('active');
             } else {
-                obj.chart.update();
+                el.classList.remove('active');
+            }
+        }
+    });
+}
+
+/* ================================================================
+ *  COMMANDS
+ * ================================================================ */
+
+async function sendCommand(cmd) {
+    try {
+        const response = await fetch(`http://${window.location.host}/api/command/${cmd}`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = await response.json();
+        console.log('Command OK:', cmd, data);
+    } catch (error) {
+        console.error('Command failed:', cmd, error);
+        alert('Comando fallito: ' + error.message);
+    }
+}
+
+/* ================================================================
+ *  THEME
+ * ================================================================ */
+
+function initTheme() {
+    const saved = localStorage.getItem('hydro-theme') || 'dark';
+    document.documentElement.setAttribute('data-theme', saved);
+    updateToggleIcon(saved);
+}
+
+function toggleTheme() {
+    const current = document.documentElement.getAttribute('data-theme');
+    const next = current === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    localStorage.setItem('hydro-theme', next);
+    updateToggleIcon(next);
+    applyChartTheme();
+}
+
+function updateToggleIcon(theme) {
+    const btn = document.getElementById('theme-toggle');
+    if (btn) btn.textContent = theme === 'dark' ? '\u2600\ufe0f' : '\ud83c\udf19';
+}
+
+function applyChartTheme() {
+    const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+    const gridColor = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.08)';
+    const tickColor = isDark ? '#8899a6' : '#666';
+
+    Chart.defaults.color = tickColor;
+    Chart.defaults.borderColor = gridColor;
+
+    // Update all existing charts
+    for (const tabId of Object.keys(charts)) {
+        for (const key of Object.keys(charts[tabId])) {
+            const c = charts[tabId][key].chart;
+            if (c) {
+                c.options.scales.y.grid.color = gridColor;
+                c.options.scales.y.ticks.color = tickColor;
+                c.options.scales.x.ticks.color = tickColor;
+                c.update();
             }
         }
     }
 }
 
-function newChart(ctx, obj) {
-    return new Chart(ctx, {
-        type: 'line',
-        data: obj.data,
-        options: {
-            responsive: true,
-            animation: false,
-            scales: {
-                y: {
-                    grid: {
-                        color: 'rgba(255,255,255,0.06)',
-                        drawBorder: false,
-                    },
-                    ticks: {
-                        color: '#8a9bb5',
-                        font: { family: "'Roboto Mono', monospace", size: 11 },
-                    },
-                },
-                x: {
-                    grid: { display: false },
-                    ticks: {
-                        maxRotation: 45,
-                        minRotation: 45,
-                        color: '#8a9bb5',
-                        font: { family: "'Roboto Mono', monospace", size: 10 },
-                    },
-                },
-            },
-            interaction: {
-                mode: 'index',
-                intersect: false,
-            },
-            plugins: {
-                legend: { display: false },
-                annotation: { annotations: {} },
-                tooltip: {
-                    backgroundColor: 'rgba(15,25,35,0.95)',
-                    titleColor: '#e8edf2',
-                    bodyColor: '#e8edf2',
-                    borderColor: 'rgba(255,255,255,0.1)',
-                    borderWidth: 1,
-                    cornerRadius: 8,
-                    padding: 12,
-                    displayColors: false,
-                    callbacks: {
-                        title: () => '',
-                        label: function (context) {
-                            const unit = context.chart && context.chart.options && context.chart.options._unit
-                                ? context.chart.options._unit
-                                : (obj.unit || '');
-                            if (!context.chart.options._unit) context.chart.options._unit = obj.unit;
-                            return `${context.label}  ·  ${context.parsed.y.toFixed(2)} ${unit}`;
-                        },
-                    },
-                },
-                noDataMessage: true,
-            },
-        },
-    });
-}
+/* ================================================================
+ *  HELPERS
+ * ================================================================ */
 
-function newChartData(color) {
-    return {
-        labels: [],
-        datasets: [{
-            data: [],
-            borderColor: color.border,
-            backgroundColor: color.bg,
-            fill: true,
-            tension: 0.3,
-            pointRadius: 2,
-            pointHoverRadius: 5,
-            borderWidth: 2,
-        }],
-    };
+function fmtTs(ts) {
+    const d = new Date(ts);
+    return d.toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
