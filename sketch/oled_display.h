@@ -202,24 +202,25 @@ static void _drawSlide(uint8_t slide, int16_t yBase) {
 // ── I2C recovery: sblocca bus se SDA è tenuto basso ──────────────────────
 // STM32U585 HAL ha timeout interno, ma se il bus è in stallo elettrico
 // servono 9 clock pulses manuali per sbloccare lo slave.
+// Usa SCL/SDA (definite nel core STM32 dell'UNO Q, non PIN_WIRE_*).
 static void _recoverI2C() {
   Wire.end();
   // 9 clock pulses per forzare il rilascio di SDA
-  pinMode(PIN_WIRE_SCL, OUTPUT);
-  pinMode(PIN_WIRE_SDA, INPUT);
+  pinMode(SCL, OUTPUT);
+  pinMode(SDA, INPUT);
   for (int i = 0; i < 9; i++) {
-    digitalWrite(PIN_WIRE_SCL, HIGH);
+    digitalWrite(SCL, HIGH);
     delayMicroseconds(5);
-    digitalWrite(PIN_WIRE_SCL, LOW);
+    digitalWrite(SCL, LOW);
     delayMicroseconds(5);
   }
   // Genera condizione STOP
-  pinMode(PIN_WIRE_SDA, OUTPUT);
-  digitalWrite(PIN_WIRE_SDA, LOW);
+  pinMode(SDA, OUTPUT);
+  digitalWrite(SDA, LOW);
   delayMicroseconds(5);
-  digitalWrite(PIN_WIRE_SCL, HIGH);
+  digitalWrite(SCL, HIGH);
   delayMicroseconds(5);
-  digitalWrite(PIN_WIRE_SDA, HIGH);
+  digitalWrite(SDA, HIGH);
   delayMicroseconds(5);
   // Riavvia I2C
   Wire.begin();
