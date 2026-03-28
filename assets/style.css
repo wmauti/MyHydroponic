@@ -261,6 +261,71 @@ body {
 }
 
 /* ================================================================
+ *  PUMP STATUS BAR
+ * ================================================================ */
+
+.pump-bar {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.pump-indicator {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px;
+    border-radius: 8px;
+    font-size: 11px;
+    font-family: 'Roboto Mono', monospace;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    color: var(--text-secondary);
+    background: var(--bg-card-glass);
+    border: 1px solid var(--border-card);
+    transition: all 0.3s ease;
+}
+
+.pump-indicator.active {
+    color: #fff;
+    background: rgba(46, 204, 113, 0.2);
+    border-color: #2ecc71;
+}
+
+.pump-led {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    flex-shrink: 0;
+    transition: all 0.3s ease;
+}
+
+.pump-indicator.active .pump-led {
+    background: #2ecc71;
+    box-shadow: 0 0 6px #2ecc71, 0 0 12px rgba(46, 204, 113, 0.4);
+    animation: pump-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pump-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+.pump-info {
+    margin-left: auto;
+    color: var(--accent);
+    border-color: var(--accent);
+    background: var(--accent-glow);
+}
+
+.pump-info-icon {
+    font-size: 13px;
+}
+
+/* ================================================================
  *  KPI CARDS
  * ================================================================ */
 
@@ -340,6 +405,21 @@ body {
 
 .kpi-ok  { color: #2ecc71 !important; }
 .kpi-low { color: #e74c3c !important; }
+
+/* KPI alert state — out of range */
+.kpi-card.kpi-alert {
+    border-top-color: #e74c3c !important;
+    animation: kpi-alert-flash 2s ease-in-out infinite;
+}
+
+.kpi-card.kpi-alert .kpi-value {
+    color: #e74c3c !important;
+}
+
+@keyframes kpi-alert-flash {
+    0%, 100% { box-shadow: var(--shadow-glass); }
+    50% { box-shadow: 0 0 12px rgba(231, 76, 60, 0.3); }
+}
 
 /* ================================================================
  *  TABS
@@ -659,6 +739,161 @@ body {
 }
 
 /* ================================================================
+ *  SETTINGS TAB
+ * ================================================================ */
+
+.settings-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 16px;
+    width: 100%;
+}
+
+.settings-section {
+    background: var(--bg-card-glass);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid var(--border-card);
+    border-radius: 12px;
+    padding: 16px;
+}
+
+.settings-section h3 {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent);
+    letter-spacing: 1px;
+    margin: 0 0 12px 0;
+    text-transform: uppercase;
+}
+
+.setting-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 10px;
+}
+
+.setting-row label {
+    font-size: 12px;
+    color: var(--text-secondary);
+    font-family: 'Open Sans', sans-serif;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.setting-row input {
+    width: 80px;
+    padding: 6px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border-card);
+    background: var(--bg-input);
+    color: var(--text-primary);
+    font-family: 'Roboto Mono', monospace;
+    font-size: 13px;
+    text-align: right;
+    outline: none;
+    transition: border-color 0.2s;
+}
+
+.setting-row input:focus {
+    border-color: var(--accent);
+}
+
+.btn-save {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 8px 20px;
+    font-family: 'Open Sans', sans-serif;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.2s;
+    letter-spacing: 0.5px;
+    margin-top: 8px;
+}
+
+.btn-save:hover {
+    opacity: 0.85;
+}
+
+.btn-save:active {
+    transform: translateY(1px);
+}
+
+/* System info grid */
+.sysinfo-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 10px;
+    width: 100%;
+}
+
+.sysinfo-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 12px;
+    background: var(--bg-card-glass);
+    border: 1px solid var(--border-card);
+    border-radius: 8px;
+}
+
+.sysinfo-label {
+    font-size: 10px;
+    color: var(--text-muted);
+    font-family: 'Roboto Mono', monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+}
+
+.sysinfo-value {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--text-primary);
+    font-family: 'Roboto Mono', monospace;
+}
+
+/* Schedule hours visualization */
+.schedule-hours {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+}
+
+.hour-chip {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 28px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 700;
+    font-family: 'Roboto Mono', monospace;
+    background: var(--bg-input);
+    color: var(--text-secondary);
+    border: 1px solid var(--border-card);
+}
+
+.hour-chip.hour-active {
+    background: var(--accent-glow);
+    color: var(--accent);
+    border-color: var(--accent);
+}
+
+.hour-chip.hour-done {
+    background: rgba(46, 204, 113, 0.15);
+    color: #2ecc71;
+    border-color: #2ecc71;
+}
+
+/* ================================================================
  *  ERROR MESSAGE
  * ================================================================ */
 
@@ -713,12 +948,32 @@ body {
 }
 
 @media (max-width: 768px) {
-    body { padding: 12px; }
+    body { padding: 10px; }
     .arduino-text { font-size: 16px; }
     .arduino-logo { height: 18px; }
     .tabs { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-    .tab { padding: 6px 10px; font-size: 11px; }
+    .tab { padding: 8px 12px; font-size: 11px; min-height: 36px; }
     .kpi-value { font-size: 20px; }
     .actions { flex-wrap: wrap; gap: 6px; }
-    .btn { padding: 6px 10px; font-size: 10px; }
+    .btn { padding: 8px 12px; font-size: 10px; min-height: 36px; }
+    .pump-bar { gap: 6px; }
+    .pump-indicator { padding: 4px 8px; font-size: 10px; }
+    .pump-info { margin-left: 0; }
+    .settings-grid { grid-template-columns: 1fr; }
+    .sysinfo-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 480px) {
+    body { padding: 8px; }
+    .header-left { gap: 8px; }
+    .arduino-text { font-size: 14px; letter-spacing: 0.5px; }
+    .server-clock { font-size: 12px; }
+    .control-panel { padding: 6px 10px; gap: 12px; }
+    .status-label { font-size: 10px; }
+    .status-value { font-size: 12px; padding: 3px 8px; }
+    .kpi-card { min-width: 100px; padding: 10px 12px; }
+    .kpi-label { font-size: 10px; }
+    .kpi-value { font-size: 18px; }
+    .pump-indicator { font-size: 9px; padding: 3px 6px; }
+    .sysinfo-grid { grid-template-columns: 1fr 1fr; }
 }

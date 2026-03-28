@@ -25,6 +25,16 @@ const RANGE_BANDS = {
     temp: { min: 18,  max: 26,  color: 'rgba(255,152,0,0.13)' },
 };
 
+/* ---------- KPI ALERT THRESHOLDS ---------- */
+const KPI_ALERTS = {
+    ph:   { min: 5.5, max: 6.5 },
+    ec:   { min: 1.0, max: 2.0 },
+    temp: { min: 18,  max: 26  },
+};
+
+/* ---------- PUMP NAMES ---------- */
+const PUMP_NAMES = ['irrigation', 'ph_down', 'nutrients', 'recirculation', 'refill'];
+
 /* ---------- TAB CONFIG ---------- */
 const TABS = [
     { id: '1y',  label: '1 anno', start: '-365d', aggr: '1d',  maxPts: 400, showMin: false, showSec: false },
@@ -35,6 +45,7 @@ const TABS = [
     { id: '1h',  label: '1 h',    start: '-1h',   aggr: '5m',  maxPts: 12,  showMin: true,  showSec: true  },
     { id: 'live',     label: 'Live',     isLive: true },
     { id: 'dosaggi',  label: 'Dosaggi',  isDosaggi: true },
+    { id: 'settings', label: 'Sistema',  isSettings: true },
 ];
 
 /* ---------- FSM STATE MAP ---------- */
@@ -72,6 +83,7 @@ document.addEventListener('DOMContentLoaded', () => {
     buildTabs();
     buildTabContents();
     initSocketIO();
+    initSystemInfo();
 });
 
 /* ---------- KPI CARDS ---------- */
@@ -120,10 +132,12 @@ function switchTab(tab) {
     document.querySelector(`.tab[data-tab="${tab.id}"]`).classList.add('active');
     document.getElementById(`tab-${tab.id}`).classList.add('active');
 
-    if (!tab.isLive && !tab.isDosaggi) {
+    if (!tab.isLive && !tab.isDosaggi && !tab.isSettings) {
         loadHistoricalTab(tab);
     } else if (tab.isDosaggi) {
         loadDosaggiTab();
+    } else if (tab.isSettings) {
+        loadSystemStatus();
     }
 }
 
@@ -138,6 +152,8 @@ function buildTabContents() {
 
         if (tab.isDosaggi) {
             div.innerHTML = buildDosaggiHTML();
+        } else if (tab.isSettings) {
+            div.innerHTML = buildSettingsHTML();
         } else {
             div.innerHTML = buildChartTabHTML(tab);
             initChartsForTab(tab, div);
@@ -481,6 +497,23 @@ function initSocketIO() {
         const el = document.getElementById('server-clock');
         if (el && msg.time) el.textContent = msg.time;
     });
+
+    // Pump status
+    socket.on('pump_status', (msg) => {
+        updatePumpStatus(msg);
+    });
+}
+
+/* Fetch system status on first load for pump bar + next irrigation */
+function initSystemInfo() {
+    loadSystemStatus();
+    // Refresh system info every 60s
+    setInterval(() => {
+        const settingsTab = document.getElementById('tab-settings');
+        if (settingsTab && settingsTab.classList.contains('active')) {
+            loadSystemStatus();
+        }
+    }, 60000);
 }
 
 /* ================================================================
@@ -504,11 +537,15 @@ function updateKPI(key, msg) {
 
     if (!valEl) return;
 
+    const card = document.getElementById(`kpi-${key}`);
+
     if (key === 'level') {
         valEl.textContent = state.current >= 1 ? 'OK' : 'LOW';
         valEl.className = 'kpi-value ' + (state.current >= 1 ? 'kpi-ok' : 'kpi-low');
         if (trendEl) trendEl.textContent = '';
         if (rangeEl) rangeEl.textContent = '';
+        // Alert for low water
+        if (card) card.classList.toggle('kpi-alert', state.current < 1);
     } else {
         valEl.textContent = state.current.toFixed(2);
         if (trendEl && state.prev !== null) {
@@ -519,6 +556,12 @@ function updateKPI(key, msg) {
         if (rangeEl && state.history.length > 0) {
             const vals = state.history.map(h => h.value);
             rangeEl.textContent = `min ${Math.min(...vals).toFixed(1)} / max ${Math.max(...vals).toFixed(1)}`;
+        }
+        // Alert if out of range
+        const alert = KPI_ALERTS[key];
+        if (card && alert) {
+            const outOfRange = state.current < alert.min || state.current > alert.max;
+            card.classList.toggle('kpi-alert', outOfRange);
         }
     }
 }
@@ -663,6 +706,133 @@ function newChartData(borderColor, backgroundColor) {
             fill: true,
         }],
     };
+}
+
+/* ================================================================
+ *  SETTINGS / SYSTEM TAB
+ * ================================================================ */
+
+function buildSettingsHTML() {
+    return `
+        <div class="sysinfo-grid" id="sysinfo-grid">
+            <div class="sysinfo-item"><span class="sysinfo-label">Uptime</span><span class="sysinfo-value" id="sys-uptime">--</span></div>
+            <div class="sysinfo-item"><span class="sysinfo-label">Stato FSM</span><span class="sysinfo-value" id="sys-state">--</span></div>
+            <div class="sysinfo-item"><span class="sysinfo-label">In stato da</span><span class="sysinfo-value" id="sys-state-elapsed">--</span></div>
+            <div class="sysinfo-item"><span class="sysinfo-label">Prossima irrigazione</span><span class="sysinfo-value" id="sys-next-irrig">--</span></div>
+            <div class="sysinfo-item"><span class="sysinfo-label">Intervallo sensori</span><span class="sysinfo-value" id="sys-interval">--</span></div>
+            <div class="sysinfo-item"><span class="sysinfo-label">Connessione</span><span class="sysinfo-value" id="sys-conn" style="color:#2ecc71">OK</span></div>
+        </div>
+
+        <div class="settings-grid">
+            <div class="settings-section">
+                <h3>Soglie pH / EC</h3>
+                <div class="setting-row"><label>pH min</label><input type="number" step="0.1" id="cfg-ph-min" value="5.5"></div>
+                <div class="setting-row"><label>pH max</label><input type="number" step="0.1" id="cfg-ph-max" value="6.5"></div>
+                <div class="setting-row"><label>EC min (mS/cm)</label><input type="number" step="0.1" id="cfg-ec-min" value="1.0"></div>
+                <div class="setting-row"><label>EC max (mS/cm)</label><input type="number" step="0.1" id="cfg-ec-max" value="2.0"></div>
+                <div class="setting-row"><label>Intervallo sensori (s)</label><input type="number" step="1" id="cfg-interval" value="30"></div>
+                <button class="btn btn-save" onclick="saveConfig()">Salva configurazione</button>
+            </div>
+
+            <div class="settings-section">
+                <h3>Schedule irrigazione</h3>
+                <div class="schedule-hours" id="schedule-hours"></div>
+            </div>
+        </div>`;
+}
+
+async function loadSystemStatus() {
+    try {
+        const resp = await fetch(`http://${window.location.host}/api/system_status`);
+        if (!resp.ok) return;
+        const data = await resp.json();
+
+        const el = (id) => document.getElementById(id);
+
+        // Uptime
+        const hrs = Math.floor(data.uptime_sec / 3600);
+        const mins = Math.floor((data.uptime_sec % 3600) / 60);
+        if (el('sys-uptime')) el('sys-uptime').textContent = `${hrs}h ${mins}m`;
+        if (el('sys-state')) el('sys-state').textContent = data.state;
+        if (el('sys-state-elapsed')) {
+            const eSec = data.state_elapsed_sec;
+            el('sys-state-elapsed').textContent = eSec > 60 ? `${Math.floor(eSec / 60)}m ${eSec % 60}s` : `${eSec}s`;
+        }
+        if (el('sys-next-irrig')) el('sys-next-irrig').textContent = data.next_irrigation;
+        if (el('sys-interval')) el('sys-interval').textContent = `${data.sensor_interval}s`;
+
+        // Update next irrigation badge in pump bar
+        if (el('next-irrig-text')) el('next-irrig-text').textContent = data.next_irrigation;
+
+        // Thresholds
+        if (data.thresholds) {
+            if (el('cfg-ph-min')) el('cfg-ph-min').value = data.thresholds.ph_min;
+            if (el('cfg-ph-max')) el('cfg-ph-max').value = data.thresholds.ph_max;
+            if (el('cfg-ec-min')) el('cfg-ec-min').value = data.thresholds.ec_min;
+            if (el('cfg-ec-max')) el('cfg-ec-max').value = data.thresholds.ec_max;
+            // Update alert thresholds
+            KPI_ALERTS.ph.min = data.thresholds.ph_min;
+            KPI_ALERTS.ph.max = data.thresholds.ph_max;
+            KPI_ALERTS.ec.min = data.thresholds.ec_min;
+            KPI_ALERTS.ec.max = data.thresholds.ec_max;
+        }
+        if (el('cfg-interval')) el('cfg-interval').value = data.sensor_interval;
+
+        // Schedule hours visualization
+        const container = el('schedule-hours');
+        if (container && data.watering_hours) {
+            container.innerHTML = '';
+            for (let h = 0; h < 24; h++) {
+                const chip = document.createElement('div');
+                chip.className = 'hour-chip';
+                chip.textContent = h;
+                if (data.watering_hours.includes(h)) chip.classList.add('hour-active');
+                container.appendChild(chip);
+            }
+        }
+    } catch (e) {
+        console.log('System status fetch error:', e.message);
+    }
+}
+
+async function saveConfig() {
+    const el = (id) => document.getElementById(id);
+    const params = new URLSearchParams({
+        ph_min: el('cfg-ph-min')?.value || '',
+        ph_max: el('cfg-ph-max')?.value || '',
+        ec_min: el('cfg-ec-min')?.value || '',
+        ec_max: el('cfg-ec-max')?.value || '',
+        sensor_interval: el('cfg-interval')?.value || '',
+    });
+    try {
+        const resp = await fetch(`http://${window.location.host}/api/config/update?${params}`);
+        const data = await resp.json();
+        if (data.status === 'ok') {
+            alert('Configurazione salvata!');
+            loadSystemStatus();
+        } else {
+            alert('Errore: ' + (data.message || 'sconosciuto'));
+        }
+    } catch (e) {
+        alert('Errore di connessione: ' + e.message);
+    }
+}
+
+/* ================================================================
+ *  PUMP STATUS
+ * ================================================================ */
+
+function updatePumpStatus(status) {
+    PUMP_NAMES.forEach(name => {
+        const el = document.getElementById(`pump-${name}`);
+        if (el) {
+            if (status[name]) {
+                el.classList.add('active');
+            } else {
+                el.classList.remove('active');
+            }
+        }
+    });
 }
 
 /* ================================================================
